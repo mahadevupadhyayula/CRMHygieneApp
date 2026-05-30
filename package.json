@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "prisma:validate": "prisma validate"
+    "prisma:validate": "prisma validate",
+    "pretest": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^6.19.0",
