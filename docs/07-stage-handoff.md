@@ -2,9 +2,92 @@
 
 ## Current Stage Completed
 
-Stage 3 — Deal-to-Source Matching Agent
+Stage 4 — Entity Resolution Agent
 
-Stage 3 is complete because the repository now has a deterministic deal-to-source matching agent that validates matching inputs, scores eligible source items against candidate opportunities, returns matched/ambiguous/unmatched `SourceMatch` outcomes with explainable reasons, excludes private or unauthorized sources, and is covered by focused unit tests plus scenario tests for ambiguous and edge-case source attachment.
+Stage 4 is complete because the repository now has a deterministic entity resolution agent that converts authorized source item text into schema-validated `ResolvedEntity` records for accounts, opportunities, contacts, role-only stakeholders, internal owners, competitors, product/module references, documents, dates, amounts, discounts, and risk keywords. It preserves source provenance and evidence text for every resolved mention, flags ambiguous pronouns and unanchored relative dates as low-confidence entities, and is covered by focused unit tests plus fixture-backed integration tests.
+
+## Stage 4 — Entity Resolution Agent
+
+### Summary of Implementation
+
+Stage 4 adds a pure entity-resolution boundary that prepares normalized entity context for future evidence extraction and field comparison without extracting structured CRM facts or writing anything back. The entity resolution agent:
+
+- Exposes `resolveEntities(context, options)` for source-item batches and `resolveEntitiesFromText(text, context, options)` for focused tests and inline callers.
+- Validates accounts, opportunities, contacts, source items, options, entity types, and `ResolvedEntity` outputs with Zod schemas.
+- Combines source item title, body, and `metadata.matchedText` before applying deterministic extraction rules.
+- Resolves known account and opportunity mentions to their external ID, record ID, or name fallback.
+- Resolves named contacts from full names, unique first names, and email addresses while avoiding contact creation for role-only references.
+- Separates customer stakeholders and roles from internal owner references such as internal finance, sales engineer, deal desk, and legal owner.
+- Normalizes absolute dates, anchored relative weekdays, end-of-month, and end-of-quarter mentions; low-confidence ambiguous date records are emitted when relative dates lack a timestamp anchor.
+- Extracts competitor names, product/module references, document references, currency amounts, discount/uplift percentages, and risk keywords.
+- Emits low-confidence role entities for ambiguous pronouns and unresolved stakeholder labels so later stages can preserve uncertainty.
+- Deduplicates repeated entities per source item, keeps the highest-confidence duplicate, and returns deterministic ordering.
+- Preserves `sourceItemId`, raw mention text, normalized value, confidence, and an evidence snippet on every resolved entity.
+
+### Files Changed
+
+- `lib/agents/entity-resolution/index.ts` — Stage 4 entity resolution implementation, deterministic extractors, date/amount normalization, evidence snippets, deduplication, public exports, and helper APIs.
+- `lib/agents/entity-resolution/schemas.ts` — Zod schemas for entity types, resolved entities, contact/account/opportunity/source context, options, and output lists.
+- `lib/agents/entity-resolution/types.ts` — TypeScript types inferred from the Stage 4 entity resolution schemas.
+- `tests/unit/stage4-entity-resolution.test.ts` — focused unit coverage for named contacts, role-only stakeholders, customer-vs-internal owner distinction, date normalization and ambiguity, competitors, product/modules, documents, amounts/discounts, ambiguous pronouns, and edge cases.
+- `tests/integration/stage4-entity-resolution-fixtures.test.ts` — fixture-backed integration coverage that resolves entities against deterministic Stage 1 opportunity/source fixtures.
+- `docs/stages/stage-04-entity-resolution.md` — documented the Stage 4 goal, inputs, outputs, supported entity types, invariants, and out-of-scope boundaries.
+- `docs/04-agent-contracts.md` — documented the Stage 4 entity resolution contract, schemas, safety constraints, and evidence requirements.
+- `docs/08-decision-log.md` — recorded the Stage 4 design decision to keep entity resolution deterministic and provenance-preserving.
+- `docs/05-test-strategy.md` — added the Stage 4 entity resolution test categories.
+- `docs/07-stage-handoff.md` — updated this handoff for the completed Stage 4 entity resolution agent.
+
+### Tests Added
+
+- Added Stage 4 unit tests for schema validation, CRM context resolution, named contact matching, unique first-name and email contact matching, role-only stakeholder extraction, internal owner separation, date normalization, date ambiguity, competitor extraction, product/module extraction, document extraction, amount/discount extraction, ambiguous pronouns, and deterministic edge cases.
+- Added Stage 4 fixture-backed integration tests for the Northstar, Evergreen, Nimbus, and Bluebird Stage 1 fixtures to verify contact, date, legal document, security questionnaire, risk, role-only CFO, and timestamp-anchored relative-date behavior against realistic source data.
+
+### Test Commands Run and Results
+
+- `npm run prisma:validate` — passed.
+- `npm test` — passed.
+
+### Known Limitations
+
+- Entity resolution is deterministic and pattern-based; it does not make LLM calls, semantic embedding calls, web searches, or external enrichment requests.
+- The resolver supports a bounded alias vocabulary for roles, internal owners, documents, risks, date phrases, competitors, and product/module references rather than a complete ontology.
+- Competitor and product/module extraction use conservative phrase patterns and may miss informal shorthand or unusual casing.
+- Date normalization supports ISO dates, `next <weekday>`, end-of-month, end-of-quarter, quarter labels, and `soon`; broader natural-language date parsing is not implemented.
+- Ambiguous pronouns and generic stakeholder labels are intentionally unresolved low-confidence role entities; no coreference resolution is attempted.
+- Amount extraction normalizes visible currency and percentage mentions but does not calculate totals, infer ACV/ARR, or reconcile conflicting commercial values.
+- Stage 4 does not persist `ResolvedEntity` records, compare them with CRM fields, score hygiene, recommend action, create approvals, emit audit events, or write back to CRM.
+
+### Decisions Made
+
+- Keep entity resolution as a pure TypeScript module so tests can run deterministically without database setup, network access, or model dependencies.
+- Validate all inputs and outputs with Zod before returning entities to downstream stages.
+- Preserve exact source provenance by requiring every entity to carry `sourceItemId`, raw text, normalized value, confidence, and evidence text.
+- Resolve named contacts only from known context and keep role-only stakeholders separate to avoid inventing people.
+- Distinguish internal owner aliases from customer contact and role mentions so future comparison logic does not confuse seller-side blockers with customer-side stakeholders.
+- Represent unresolved pronouns and ambiguous relative dates as low-confidence entities instead of dropping them, preserving reviewable uncertainty for future stages.
+
+### Next Recommended Stage
+
+Stage 5 — Evidence Extraction and Field Comparison
+
+The next stage should consume Stage 2 authorized context, Stage 3 matched source attachments, and Stage 4 resolved entities to extract bounded evidence for specific CRM fields, compare extracted evidence with current CRM values, and emit reviewable differences without hygiene scoring, recommendations, approvals, audit persistence, or CRM writeback. Recommended Stage 5 outcomes:
+
+- Define an extraction/comparison contract that accepts matched source items, `ResolvedEntity` context, target CRM fields, and deterministic extraction options.
+- Implement field-specific extractors for a bounded first set of CRM hygiene fields such as decision maker, next step, close date, amount/procurement blocker, legal/security status, forecast/stage signal, competitor, and product/module references.
+- Return structured evidence snippets, source references, resolved-entity references, confidence, and conflict/insufficient-evidence statuses.
+- Preserve Stage 3 ambiguity semantics by excluding ambiguous and unmatched sources from automatic extraction unless a review-mode contract is explicitly defined.
+- Preserve Stage 4 uncertainty semantics by treating low-confidence pronouns and unanchored relative dates as review cues, not confirmed CRM values.
+- Add unit and integration tests for supported fields, missing evidence, conflicting evidence, stale evidence, source provenance, private-source exclusion, resolved-entity provenance, and deterministic ordering.
+
+### Context for the Next Codex Session
+
+- Start by reading `docs/stages/stage-04-entity-resolution.md`, `docs/04-agent-contracts.md`, `docs/05-test-strategy.md`, `lib/agents/ingestion/index.ts`, `lib/agents/matching/index.ts`, `lib/agents/entity-resolution/index.ts`, `lib/agents/entity-resolution/schemas.ts`, `tests/unit/stage4-entity-resolution.test.ts`, and `tests/integration/stage4-entity-resolution-fixtures.test.ts`.
+- Treat Stage 3 `SourceMatch.status === "matched"` as the default automatic source eligibility boundary for extraction; ambiguous and unmatched results should remain in review paths unless the next stage explicitly defines review-mode behavior.
+- Feed Stage 4 `ResolvedEntity` records into extraction as supporting context, but do not treat low-confidence ambiguous pronouns or unanchored relative dates as confirmed CRM facts.
+- Preserve source eligibility checks for `SourceVisibility.PRIVATE`, `metadata.authorized === false`, and `metadata.authorization.authorized === false` at every downstream boundary.
+- Keep Stage 5 bounded to evidence extraction and CRM-field comparison; do not implement hygiene scoring, recommendations, approvals, audit persistence, or CRM writeback unless the stage plan is expanded.
+- Maintain deterministic fixtures and stable reason/status/entity expectations so future tests can compare exact outputs.
+- Re-run `npm run prisma:validate` and `npm test` after changing schema, seed, ingestion, matching, entity resolution, extraction, or rules code.
 
 ## Stage 3 — Deal-to-Source Matching Agent
 
