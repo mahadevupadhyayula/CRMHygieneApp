@@ -6,3 +6,396 @@ datasource db {
   provider = "sqlite"
   url      = "file:./dev.db"
 }
+
+enum OpportunityStage {
+  PROSPECTING
+  QUALIFICATION
+  DISCOVERY
+  PROPOSAL
+  NEGOTIATION
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+enum ForecastCategory {
+  PIPELINE
+  BEST_CASE
+  COMMIT
+  CLOSED
+  OMITTED
+}
+
+enum SourceType {
+  EMAIL
+  MEETING_NOTE
+  CALL_TRANSCRIPT
+  DOCUMENT
+  CRM_NOTE
+  SUPPORT_TICKET
+  WEB_PAGE
+  OTHER
+}
+
+enum SourceVisibility {
+  PRIVATE
+  TEAM
+  INTERNAL
+  PUBLIC
+}
+
+enum FactStatus {
+  EXTRACTED
+  VERIFIED
+  DISMISSED
+  STALE
+}
+
+enum FieldComparisonStatus {
+  MATCH
+  MISMATCH
+  MISSING_IN_CRM
+  MISSING_IN_SOURCE
+  NEEDS_REVIEW
+}
+
+enum RecommendationStatus {
+  DRAFT
+  READY
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  APPLIED
+  DISMISSED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  APPLIED
+  CANCELLED
+}
+
+enum AuditEventType {
+  ACCOUNT_CREATED
+  CONTACT_CREATED
+  OPPORTUNITY_CREATED
+  SNAPSHOT_CAPTURED
+  SOURCE_INGESTED
+  FACT_EXTRACTED
+  COMPARISON_CREATED
+  SCORE_CALCULATED
+  RECOMMENDATION_CREATED
+  APPROVAL_REQUESTED
+  APPROVAL_DECIDED
+  RECOMMENDATION_APPLIED
+  FEEDBACK_RECORDED
+  RECORD_UPDATED
+}
+
+model Account {
+  id         String   @id @default(cuid())
+  externalId String?  @unique
+  name       String
+  website    String?
+  industry   String?
+  segment    String?
+  ownerName  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  contacts      Contact[]
+  opportunities Opportunity[]
+  sourceItems   SourceItem[]
+  auditEvents   AuditEvent[]
+
+  @@index([name])
+}
+
+model Contact {
+  id         String   @id @default(cuid())
+  accountId  String?
+  externalId String?  @unique
+  firstName  String?
+  lastName   String?
+  email      String?
+  title      String?
+  phone      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  account        Account?             @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  opportunities  OpportunityContact[]
+  sourceItems    SourceItem[]
+  extractedFacts ExtractedFact[]
+  feedbackEvents FeedbackEvent[]
+
+  @@index([accountId])
+  @@index([email])
+}
+
+model Opportunity {
+  id               String           @id @default(cuid())
+  accountId        String
+  externalId       String?          @unique
+  name             String
+  stage            OpportunityStage @default(PROSPECTING)
+  forecastCategory ForecastCategory @default(PIPELINE)
+  amount           Float?
+  closeDate        DateTime?
+  ownerName        String?
+  description      String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  account          Account              @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contacts         OpportunityContact[]
+  fieldSnapshots   CRMFieldSnapshot[]
+  sourceItems      SourceItem[]
+  extractedFacts   ExtractedFact[]
+  fieldComparisons FieldComparison[]
+  hygieneScores    HygieneScore[]
+  recommendations  Recommendation[]
+  auditEvents      AuditEvent[]
+  feedbackEvents   FeedbackEvent[]
+
+  @@index([accountId])
+  @@index([stage])
+  @@index([forecastCategory])
+  @@index([closeDate])
+}
+
+model OpportunityContact {
+  opportunityId String
+  contactId     String
+  role          String?
+  isPrimary     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([opportunityId, contactId])
+  @@index([contactId])
+}
+
+model CRMFieldSnapshot {
+  id            String   @id @default(cuid())
+  opportunityId String
+  fieldName     String
+  fieldLabel    String?
+  dataType      String?
+  value         String?
+  sourceSystem  String   @default("crm")
+  capturedAt    DateTime @default(now())
+
+  opportunity      Opportunity       @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  fieldComparisons FieldComparison[]
+
+  @@unique([opportunityId, fieldName, capturedAt])
+  @@index([opportunityId])
+  @@index([fieldName])
+}
+
+model SourceItem {
+  id            String           @id @default(cuid())
+  accountId     String?
+  opportunityId String
+  contactId     String?
+  type          SourceType
+  visibility    SourceVisibility @default(INTERNAL)
+  title         String
+  uri           String?
+  body          String?
+  occurredAt    DateTime?
+  ingestedAt    DateTime         @default(now())
+  metadataJson  String?
+
+  account         Account?         @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  opportunity     Opportunity      @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  contact         Contact?         @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  extractedFacts  ExtractedFact[]
+  recommendations Recommendation[]
+  auditEvents     AuditEvent[]
+  feedbackEvents  FeedbackEvent[]
+
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([contactId])
+  @@index([type])
+  @@index([visibility])
+}
+
+model ExtractedFact {
+  id            String     @id @default(cuid())
+  sourceItemId  String
+  opportunityId String
+  contactId     String?
+  fieldName     String
+  factValue     String
+  confidence    Float      @default(0)
+  status        FactStatus @default(EXTRACTED)
+  rationale     String?
+  extractedAt   DateTime   @default(now())
+
+  sourceItem       SourceItem        @relation(fields: [sourceItemId], references: [id], onDelete: Cascade)
+  opportunity      Opportunity       @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  contact          Contact?          @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  fieldComparisons FieldComparison[]
+
+  @@index([sourceItemId])
+  @@index([opportunityId])
+  @@index([contactId])
+  @@index([fieldName])
+  @@index([status])
+}
+
+model FieldComparison {
+  id              String                @id @default(cuid())
+  opportunityId   String
+  snapshotId      String?
+  extractedFactId String?
+  fieldName       String
+  crmValue        String?
+  extractedValue  String?
+  status          FieldComparisonStatus @default(NEEDS_REVIEW)
+  confidence      Float                 @default(0)
+  notes           String?
+  createdAt       DateTime              @default(now())
+
+  opportunity     Opportunity       @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  snapshot        CRMFieldSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
+  extractedFact   ExtractedFact?    @relation(fields: [extractedFactId], references: [id], onDelete: SetNull)
+  recommendations Recommendation[]
+
+  @@index([opportunityId])
+  @@index([snapshotId])
+  @@index([extractedFactId])
+  @@index([fieldName])
+  @@index([status])
+}
+
+model HygieneScore {
+  id                String   @id @default(cuid())
+  opportunityId     String
+  overallScore      Int
+  completenessScore Int?
+  freshnessScore    Int?
+  consistencyScore  Int?
+  confidenceScore   Int?
+  summary           String?
+  calculatedAt      DateTime @default(now())
+
+  opportunity     Opportunity      @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  recommendations Recommendation[]
+
+  @@index([opportunityId])
+  @@index([calculatedAt])
+}
+
+model Recommendation {
+  id                String               @id @default(cuid())
+  opportunityId     String
+  fieldComparisonId String?
+  sourceItemId      String?
+  hygieneScoreId    String?
+  fieldName         String
+  currentValue      String?
+  proposedValue     String?
+  rationale         String
+  confidence        Float                @default(0)
+  status            RecommendationStatus @default(DRAFT)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  opportunity     Opportunity      @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  fieldComparison FieldComparison? @relation(fields: [fieldComparisonId], references: [id], onDelete: SetNull)
+  sourceItem      SourceItem?      @relation(fields: [sourceItemId], references: [id], onDelete: SetNull)
+  hygieneScore    HygieneScore?    @relation(fields: [hygieneScoreId], references: [id], onDelete: SetNull)
+  approvalActions ApprovalAction[]
+  auditEvents     AuditEvent[]
+  feedbackEvents  FeedbackEvent[]
+
+  @@index([opportunityId])
+  @@index([fieldComparisonId])
+  @@index([sourceItemId])
+  @@index([hygieneScoreId])
+  @@index([fieldName])
+  @@index([status])
+}
+
+model ApprovalAction {
+  id               String         @id @default(cuid())
+  recommendationId String
+  status           ApprovalStatus @default(PENDING)
+  actorId          String?
+  actorName        String?
+  comment          String?
+  requestedAt      DateTime       @default(now())
+  decidedAt        DateTime?
+  appliedAt        DateTime?
+
+  recommendation Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+  auditEvents    AuditEvent[]
+
+  @@index([recommendationId])
+  @@index([status])
+  @@index([actorId])
+}
+
+model AuditEvent {
+  id               String         @id @default(cuid())
+  type             AuditEventType
+  actorId          String?
+  actorName        String?
+  accountId        String?
+  opportunityId    String?
+  sourceItemId     String?
+  recommendationId String?
+  approvalActionId String?
+  entityType       String?
+  entityId         String?
+  message          String
+  metadataJson     String?
+  createdAt        DateTime       @default(now())
+
+  account        Account?        @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  opportunity    Opportunity?    @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  sourceItem     SourceItem?     @relation(fields: [sourceItemId], references: [id], onDelete: SetNull)
+  recommendation Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  approvalAction ApprovalAction? @relation(fields: [approvalActionId], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([sourceItemId])
+  @@index([recommendationId])
+  @@index([approvalActionId])
+  @@index([createdAt])
+}
+
+model FeedbackEvent {
+  id               String   @id @default(cuid())
+  opportunityId    String
+  recommendationId String?
+  sourceItemId     String?
+  contactId        String?
+  actorId          String?
+  actorName        String?
+  rating           Int?
+  signal           String
+  comment          String?
+  createdAt        DateTime @default(now())
+
+  opportunity    Opportunity     @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  recommendation Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  sourceItem     SourceItem?     @relation(fields: [sourceItemId], references: [id], onDelete: SetNull)
+  contact        Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([opportunityId])
+  @@index([recommendationId])
+  @@index([sourceItemId])
+  @@index([contactId])
+  @@index([signal])
+  @@index([createdAt])
+}
