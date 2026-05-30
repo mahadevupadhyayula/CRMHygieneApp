@@ -1125,3 +1125,828 @@ Ambiguous outputs should include `candidates` when `options.includeCandidates` i
   "warnings": []
 }
 ```
+
+## Stage 5 — Structured Extraction Agent
+
+The Stage 5 Structured Extraction Agent converts authorized deal context into typed extracted facts that may later drive CRM hygiene recommendations. It may use a bounded model provider to classify and normalize source text, but it must keep schemas, provider behavior, evidence references, confidence semantics, and recommendation eligibility deterministic enough for automated tests and human review. It must not write to CRM fields, make autonomous recommendations without eligibility checks, or use private, unauthorized, or metadata-incomplete source content.
+
+### Input Schema
+
+```ts
+type StructuredExtractionAgentInput = {
+  /** Correlation ID for tracing one extraction run across logs and UI review. */
+  runId: string;
+
+  /** Package returned by the Stage 2 Ingestion Agent after privacy, authorization, and deduplication filters. */
+  dealContext: DealContextPackage;
+
+  /** CRM fields or normalized hygiene facts the caller wants extracted. Empty means use the default supported fact set. */
+  extractionRequests?: ExtractionRequest[];
+
+  /** Optional model provider. Production implementations inject this dependency rather than hard-coding a vendor. */
+  modelProvider?: AIModelProvider;
+
+  /** Optional extraction controls. Defaults must be documented and fixture-stable. */
+  options?: {
+    referenceDate?: string; // ISO-8601 date used for relative-date normalization; defaults to run date.
+    timezone?: string; // IANA timezone for date interpretation; defaults to opportunity/account timezone, then UTC.
+    minimumFactConfidence?: number; // Defaults to 0.70.
+    minimumRecommendationConfidence?: number; // Defaults to 0.85.
+    maxEvidenceItemsPerFact?: number; // Defaults to 3.
+    maxFactsPerSourceItem?: number; // Defaults to 10.
+    allowModelProvider?: boolean; // Defaults to true in production and false in deterministic unit tests unless injected.
+    includeIneligibleFacts?: boolean; // Defaults to true for review/debug outputs.
+  };
+};
+
+type ExtractionRequest = {
+  /** Stable identifier used to join request-specific warnings or errors to the caller. */
+  requestId: string;
+
+  /** Fact types to extract for this request. */
+  factTypes: ExtractedFactType[];
+
+  /** Optional CRM field API names that should receive mapping metadata when supported. */
+  targetFieldNames?: string[];
+
+  /** Optional source constraints for this request. */
+  sourceFilter?: {
+    sourceItemIds?: string[];
+    sourceTypes?: SourceType[];
+    occurredAfter?: string;
+    occurredBefore?: string;
+  };
+
+  /** Optional deterministic hints that must be safe to log and test. */
+  extractionHints?: {
+    acceptedPhrases?: string[];
+    requiredEntityTypes?: EntityType[];
+    preferredDatePrecision?: "day" | "week" | "month" | "quarter";
+    currencyCode?: string;
+  };
+};
+```
+
+Required input fields:
+
+- `runId`: stable trace identifier for this extraction attempt.
+- `dealContext`: a valid `DealContextPackage` that has already excluded private, unauthorized, and duplicate source items.
+
+Optional input fields:
+
+- `extractionRequests`: narrows extraction to specific fact types, CRM field targets, or source subsets. If omitted, the agent extracts the default supported fact set.
+- `modelProvider`: model dependency implementing `AIModelProvider`; tests should inject `MockModelProvider`.
+- `options.referenceDate` and `options.timezone`: anchors for relative-date normalization such as `next Friday`, `tomorrow`, or `end of quarter`.
+- `options.minimumFactConfidence`: minimum confidence for a fact to be returned as `EXTRACTED`.
+- `options.minimumRecommendationConfidence`: minimum confidence required before a fact can be eligible for recommendation generation.
+- `options.includeIneligibleFacts`: controls whether facts that are valid but not recommendation-eligible remain visible for audit.
+
+### Output Schema for Extracted Facts
+
+```ts
+type StructuredExtractionAgentOutput = {
+  runId: string;
+  opportunityId: string;
+  extractedFacts: ExtractedFact[];
+  warnings: StructuredExtractionWarning[];
+  error?: StructuredExtractionRunError;
+};
+
+type ExtractedFact = {
+  factId: string;
+  requestId?: string;
+  factType: ExtractedFactType;
+  status: "EXTRACTED" | "INELIGIBLE" | "AMBIGUOUS" | "NO_FACT" | "ERROR";
+  normalizedValue: ExtractedFactValue | null;
+  displayValue: string | null;
+  crmFieldMapping: CRMFieldMapping | null;
+  recommendationEligibility: RecommendationEligibility;
+  confidence: number; // Inclusive range: 0.0 to 1.0.
+  confidenceBand: "high" | "medium" | "low" | "none";
+  reasonCodes: StructuredExtractionReasonCode[];
+  rationale: string;
+  evidence: FactEvidenceReference[];
+  sourceMetadata: ExtractedFactSourceMetadata[];
+  alternatives?: ExtractedFactAlternative[];
+  error?: StructuredExtractionFactError;
+};
+
+type ExtractedFactValue =
+  | { type: "text"; value: string }
+  | { type: "date"; value: string; precision: "day" | "week" | "month" | "quarter"; timezone: string }
+  | { type: "boolean"; value: boolean }
+  | { type: "number"; value: number; unit?: string }
+  | { type: "currency"; value: string; currencyCode: string }
+  | { type: "person"; name?: string; contactId?: string; role?: string; email?: string }
+  | { type: "process_status"; status: string; owner?: string; blocker?: string }
+  | { type: "enum"; value: string; enumSet: string };
+
+type CRMFieldMapping = {
+  fieldName: string;
+  fieldLabel: string;
+  dataType: "string" | "number" | "currency" | "date" | "datetime" | "picklist" | "boolean";
+  updateSemantics: "replace" | "append" | "clear" | "no_update";
+  currentCrmValue?: unknown;
+  proposedCrmValue: unknown;
+  conflictPolicy: "only_if_blank" | "if_stale" | "if_confidence_higher" | "manual_review_required" | "never_auto_update";
+};
+
+type RecommendationEligibility = {
+  eligible: boolean;
+  reasonCodes: RecommendationEligibilityReasonCode[];
+  requiredReview: "none" | "human_review" | "manager_review" | "legal_review";
+};
+
+type FactEvidenceReference = {
+  sourceItemId: string;
+  sourceType: SourceType;
+  title?: string;
+  occurredAt?: string;
+  matchedText: string;
+  normalizedEvidenceValue: ExtractedFactValue | null;
+  author?: string;
+  sourceSystem: string;
+  externalId: string;
+  linkedRecordExternalId?: string;
+};
+
+type ExtractedFactSourceMetadata = {
+  sourceItemId: string;
+  sourceSystem: string;
+  externalId: string;
+  sourceType: SourceType;
+  visibility: "INTERNAL" | "PUBLIC" | "CUSTOMER_SHARED";
+  authorizationScope: string;
+  author?: string;
+  occurredAt?: string;
+  ingestedAt?: string;
+  linkedRecordExternalId?: string;
+};
+
+type ExtractedFactAlternative = {
+  normalizedValue: ExtractedFactValue;
+  displayValue: string;
+  confidence: number;
+  evidence: FactEvidenceReference[];
+  reasonCodes: StructuredExtractionReasonCode[];
+};
+```
+
+The output must include one `ExtractedFact` per material extracted fact. If no extractable facts are found, the agent returns an empty `extractedFacts` array plus a `NO_EXTRACTABLE_FACTS` warning rather than fabricating a low-confidence fact.
+
+### `AIModelProvider` Interface
+
+```ts
+type AIModelProvider = {
+  /** Provider name used for tracing and fixture assertions. */
+  readonly name: string;
+
+  /** Optional model identifier, such as a hosted model name or local mock variant. */
+  readonly model?: string;
+
+  /** Returns structured fact candidates from already-authorized source payloads. */
+  extractFacts(request: AIModelExtractionRequest): Promise<AIModelExtractionResponse>;
+};
+
+type AIModelExtractionRequest = {
+  runId: string;
+  opportunityId: string;
+  allowedFactTypes: ExtractedFactType[];
+  sources: AIModelSourcePayload[];
+  referenceDate: string;
+  timezone: string;
+  schemaVersion: "structured-extraction.v1";
+};
+
+type AIModelSourcePayload = {
+  sourceItemId: string;
+  sourceType: SourceType;
+  title?: string;
+  body: string;
+  occurredAt?: string;
+  metadata: {
+    sourceSystem: string;
+    externalId: string;
+    author?: string;
+    authorizationScope: string;
+    linkedRecordExternalId?: string;
+  };
+};
+
+type AIModelExtractionResponse = {
+  candidates: AIModelFactCandidate[];
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    latencyMs?: number;
+  };
+  warnings?: string[];
+};
+
+type AIModelFactCandidate = {
+  factType: ExtractedFactType;
+  rawText: string;
+  normalizedValue: ExtractedFactValue | null;
+  sourceItemId: string;
+  confidence: number;
+  rationale: string;
+};
+```
+
+The agent owns validation, safety filtering, CRM field mapping, eligibility checks, and final confidence bands. The provider only proposes candidates from payloads the agent has already verified as authorized and traceable.
+
+### `MockModelProvider` Testing Contract
+
+```ts
+type MockModelProviderFixture = {
+  name: "mock-model-provider";
+  responsesByRunId?: Record<string, AIModelExtractionResponse>;
+  responsesBySourceItemId?: Record<string, AIModelExtractionResponse>;
+  defaultResponse?: AIModelExtractionResponse;
+  forcedError?: AIModelProviderError;
+};
+
+type AIModelProviderError = {
+  code: "MODEL_PROVIDER_UNAVAILABLE" | "MODEL_PROVIDER_TIMEOUT" | "MODEL_PROVIDER_SCHEMA_VIOLATION";
+  message: string;
+  retryable: boolean;
+};
+```
+
+`MockModelProvider` must satisfy these testing rules:
+
+- It returns fixture responses without network calls, randomness, clock reads, or hidden state.
+- It keys responses by `runId` first, then by `sourceItemId`, then by `defaultResponse`.
+- It can force typed provider errors for timeout, unavailability, and schema-violation tests.
+- It echoes no private or unauthorized content because tests must only pass already-authorized `AIModelSourcePayload` objects into the provider.
+- It preserves candidate order exactly as configured so ambiguity and tie-breaker tests remain deterministic.
+
+### Fact Type Enum and CRM Field Mapping Semantics
+
+```ts
+type ExtractedFactType =
+  | "NEXT_STEP"
+  | "NEXT_STEP_DATE"
+  | "CFO_APPROVAL_STATUS"
+  | "PROCUREMENT_STATUS"
+  | "PROCUREMENT_BLOCKER"
+  | "LEGAL_REVIEW_STATUS"
+  | "LEGAL_PENDING_ITEM"
+  | "ECONOMIC_BUYER"
+  | "DECISION_PROCESS"
+  | "CLOSE_DATE_SIGNAL"
+  | "AMOUNT_SIGNAL"
+  | "COMPETITOR_MENTION"
+  | "RISK_SIGNAL";
+
+type StructuredExtractionReasonCode =
+  | "DIRECT_STATEMENT"
+  | "NORMALIZED_DATE"
+  | "NORMALIZED_STATUS"
+  | "ROLE_OR_PERSON_IDENTIFIED"
+  | "PROCESS_BLOCKER_IDENTIFIED"
+  | "RECENT_AUTHORITATIVE_SOURCE"
+  | "MULTIPLE_SUPPORTING_SOURCES"
+  | "CONFLICTING_FACT_VALUES"
+  | "LOW_MODEL_CONFIDENCE"
+  | "MISSING_REQUIRED_EVIDENCE"
+  | "MISSING_SOURCE_METADATA"
+  | "PRIVATE_SOURCE_EXCLUDED"
+  | "UNAUTHORIZED_SOURCE_EXCLUDED"
+  | "FIELD_MAPPING_UNSUPPORTED"
+  | "RECOMMENDATION_ELIGIBLE"
+  | "RECOMMENDATION_INELIGIBLE"
+  | "NO_FACT_CANDIDATE";
+
+type RecommendationEligibilityReasonCode =
+  | "CONFIDENCE_THRESHOLD_MET"
+  | "SUPPORTED_CRM_FIELD_MAPPING"
+  | "EVIDENCE_REQUIREMENTS_MET"
+  | "SOURCE_METADATA_REQUIREMENTS_MET"
+  | "CRM_VALUE_BLANK"
+  | "CRM_VALUE_STALE"
+  | "CRM_VALUE_CONFLICTS_WITH_EVIDENCE"
+  | "LOW_CONFIDENCE"
+  | "AMBIGUOUS_EVIDENCE"
+  | "UNSUPPORTED_CRM_FIELD_MAPPING"
+  | "INSUFFICIENT_EVIDENCE"
+  | "LEGAL_REVIEW_REQUIRED"
+  | "MANAGER_REVIEW_REQUIRED"
+  | "NO_CRM_UPDATE_ALLOWED";
+```
+
+CRM field mappings must be explicit and conservative:
+
+| Fact type | Default CRM field mapping | Update semantics | Notes |
+| --- | --- | --- | --- |
+| `NEXT_STEP` | `NextStep` | `replace` or `append` | Use `replace` only when evidence states a current action clearly; otherwise append to preserve existing context. |
+| `NEXT_STEP_DATE` | `NextStepDate__c` | `replace` | Date must be normalized to a specific day unless the field supports lower precision. |
+| `CFO_APPROVAL_STATUS` | `CFO_Approval_Status__c` | `replace` | Map to an approved picklist value such as `Approved`, `Pending`, `Blocked`, or `Not Required`. |
+| `PROCUREMENT_STATUS` | `Procurement_Status__c` | `replace` | Status summaries may update only supported picklist values. |
+| `PROCUREMENT_BLOCKER` | `Procurement_Blocker__c` | `replace` or `append` | Append if the field already contains unresolved blockers not contradicted by evidence. |
+| `LEGAL_REVIEW_STATUS` | `Legal_Review_Status__c` | `replace` | Legal status updates require evidence that identifies review state or owner. |
+| `LEGAL_PENDING_ITEM` | `Legal_Pending_Item__c` | `replace` or `append` | Legal pending facts require human or legal review before recommendations. |
+| `ECONOMIC_BUYER` | `Economic_Buyer__c` | `replace` | Prefer resolved CRM contact IDs when available; otherwise require human review. |
+| `DECISION_PROCESS` | `Decision_Process__c` | `append` | Preserve prior process notes unless a later authoritative source supersedes them. |
+| `CLOSE_DATE_SIGNAL` | `CloseDate` | `replace` | Never auto-update if the source is speculative or conflicts with forecast policy. |
+| `AMOUNT_SIGNAL` | `Amount` | `replace` | Requires currency normalization and agreement with product/pricing context. |
+| `COMPETITOR_MENTION` | `Competitor__c` | `append` | Multiple competitors are possible; do not overwrite without human review. |
+| `RISK_SIGNAL` | `Deal_Risk__c` | `append` | Risk signals are review inputs, not direct CRM truth. |
+
+### Evidence Requirements
+
+Every returned `EXTRACTED`, `INELIGIBLE`, or `AMBIGUOUS` fact must include evidence unless its status is `NO_FACT` or `ERROR`:
+
+- Evidence must reference one or more included `DealContextPackage.sourceItems` by `sourceItemId`.
+- `matchedText` must be the shortest authorized snippet that supports the extracted value without exposing unrelated content.
+- Evidence must include `sourceType`, `sourceSystem`, `externalId`, and either `occurredAt` or a documented reason for missing time data.
+- Recommendation-eligible facts require direct evidence from at least one authoritative source item or two independent supporting source items.
+- Ambiguous facts must include evidence for each material competing value unless doing so would expose excluded content; excluded content may only be summarized through warnings.
+- The agent must not cite private, unauthorized, or metadata-incomplete source items as evidence.
+
+### Source Metadata Requirements
+
+Source metadata is required for both provider input and final output:
+
+- `sourceSystem`, `externalId`, `authorizationScope`, `visibility`, and linked opportunity/account metadata must be present and parseable before a source item can be sent to `AIModelProvider`.
+- `sourceItemId` must match an included `DealContextPackage.sourceItems` record.
+- `visibility` must be `INTERNAL`, `PUBLIC`, or `CUSTOMER_SHARED`; `PRIVATE` items are excluded.
+- `authorizationScope` must permit the caller and the extraction workflow to use the content.
+- `occurredAt` is required for time-sensitive facts such as next step, legal status, procurement status, close-date signal, and amount signal unless an implementation-specific warning explains why recency cannot be assessed.
+- `author` should be preserved when available and must not be fabricated.
+
+### Confidence Semantics
+
+Confidence is the agent's bounded assessment that the authorized evidence supports the normalized extracted fact and its CRM mapping. It is not a probability that the fact is objectively true.
+
+| Confidence band | Numeric range | Typical status | Semantics |
+| --- | --- | --- | --- |
+| `high` | `0.85` to `1.00` | `EXTRACTED` | Direct, recent, well-scoped evidence supports a normalized value and CRM mapping. Multiple independent sources may increase confidence. |
+| `medium` | `0.60` to `0.84` | `EXTRACTED`, `INELIGIBLE`, or `AMBIGUOUS` | Evidence is relevant but less direct, older, model-normalized, or needs human review before recommendation. |
+| `low` | `0.01` to `0.59` | `INELIGIBLE`, `AMBIGUOUS`, or `NO_FACT` | Evidence is weak, incomplete, stale, conflicting, or below the configured fact threshold. |
+| `none` | `0.00` | `NO_FACT` or `ERROR` | No authorized candidate exists, or extraction failed before a fact could be scored. |
+
+The final confidence must never exceed the provider candidate confidence unless deterministic post-processing adds corroborating authorized evidence. Confidence must be capped below `options.minimumRecommendationConfidence` when required evidence, source metadata, or CRM field mapping is missing.
+
+### Recommendation Eligibility Rules
+
+A fact is recommendation-eligible only when all of these conditions hold:
+
+- `status` is `EXTRACTED`.
+- `confidence` is at or above `options.minimumRecommendationConfidence`.
+- `crmFieldMapping` is non-null and uses a supported `fieldName`, `dataType`, and `updateSemantics`.
+- Evidence and source metadata requirements are satisfied.
+- The proposed CRM value is materially useful: the target CRM value is blank, stale, lower confidence, or conflicts with stronger source evidence.
+- The fact is not ambiguous and has no unresolved competing alternative with medium-or-higher confidence.
+- The fact type is not blocked from recommendation by policy. Legal pending items require at least `legal_review`, and manager-sensitive facts require `manager_review`.
+- The update respects the field mapping `conflictPolicy`; `never_auto_update` facts may be surfaced for review but cannot become automated recommendations.
+
+Ineligible facts should remain auditable when `includeIneligibleFacts` is true, with `recommendationEligibility.eligible: false` and clear eligibility reason codes.
+
+### Error States
+
+```ts
+type StructuredExtractionWarning = {
+  code:
+    | "NO_EXTRACTABLE_FACTS"
+    | "PRIVATE_SOURCE_EXCLUDED"
+    | "UNAUTHORIZED_SOURCE_EXCLUDED"
+    | "MISSING_SOURCE_METADATA"
+    | "MISSING_SOURCE_TIMESTAMP"
+    | "MODEL_PROVIDER_WARNING"
+    | "FACT_BELOW_CONFIDENCE_THRESHOLD"
+    | "RECOMMENDATION_INELIGIBLE";
+  severity: "info" | "warning" | "error";
+  message: string;
+  affectedRecordIds?: string[];
+};
+
+type StructuredExtractionFactError = {
+  code:
+    | "INVALID_EXTRACTION_REQUEST"
+    | "UNSUPPORTED_FACT_TYPE"
+    | "FIELD_MAPPING_UNSUPPORTED"
+    | "EVIDENCE_VALIDATION_FAILED"
+    | "SOURCE_METADATA_VALIDATION_FAILED"
+    | "MODEL_PROVIDER_SCHEMA_VIOLATION";
+  message: string;
+  retryable: boolean;
+};
+
+type StructuredExtractionRunError = {
+  code:
+    | "INVALID_DEAL_CONTEXT"
+    | "NO_AUTHORIZED_SOURCE_AVAILABLE"
+    | "MODEL_PROVIDER_UNAVAILABLE"
+    | "MODEL_PROVIDER_TIMEOUT"
+    | "MODEL_PROVIDER_SCHEMA_VIOLATION";
+  message: string;
+  retryable: boolean;
+};
+```
+
+| Error code | Condition | Expected behavior |
+| --- | --- | --- |
+| `INVALID_DEAL_CONTEXT` | The supplied package fails schema validation or lacks required opportunity/source metadata. | Return a blocking run-level error; do not call the model provider. |
+| `NO_AUTHORIZED_SOURCE_AVAILABLE` | No source items remain after privacy, authorization, and metadata checks. | Return no facts and a run-level error or warning according to caller policy; do not infer from excluded content. |
+| `INVALID_EXTRACTION_REQUEST` | A request is missing identifiers, fact types, or declares incompatible field constraints. | Return request-scoped `ERROR` facts where possible and continue valid requests. |
+| `UNSUPPORTED_FACT_TYPE` | The requested fact type is not implemented. | Return a fact-level `ERROR` with `retryable: false`. |
+| `FIELD_MAPPING_UNSUPPORTED` | A fact can be extracted but cannot be mapped to a supported CRM field. | Return `INELIGIBLE` or fact-level `ERROR` according to caller policy; never recommend an update. |
+| `EVIDENCE_VALIDATION_FAILED` | Candidate evidence cannot be tied to an authorized source item or supporting text span. | Drop the candidate or return `INELIGIBLE`; never mark recommendation-eligible. |
+| `SOURCE_METADATA_VALIDATION_FAILED` | Required source metadata is missing or unsafe. | Exclude the source item and emit `MISSING_SOURCE_METADATA`; fail only if no valid sources remain. |
+| `MODEL_PROVIDER_UNAVAILABLE` | The provider cannot be reached or initialized. | Return a retryable run-level error unless a deterministic fallback is explicitly configured. |
+| `MODEL_PROVIDER_TIMEOUT` | Provider extraction exceeds timeout. | Return retryable run-level or request-level errors; preserve completed facts only when partial output is valid. |
+| `MODEL_PROVIDER_SCHEMA_VIOLATION` | Provider returns malformed candidates. | Reject malformed candidates, emit typed errors, and do not trust provider confidence. |
+
+### Example: Clean Next Step
+
+#### Input
+
+```json
+{
+  "runId": "structured-extraction-next-step-001",
+  "dealContext": {
+    "opportunity": {
+      "id": "opp-acme-renewal-2026",
+      "name": "Acme Renewal 2026",
+      "stage": "Proposal",
+      "forecastCategory": "Commit",
+      "amount": "125000",
+      "closeDate": "2026-06-30"
+    },
+    "account": {
+      "id": "acct-acme",
+      "name": "Acme Corp"
+    },
+    "contacts": [],
+    "crmFieldSnapshots": [
+      {
+        "id": "snap-next-step",
+        "fieldName": "NextStep",
+        "fieldLabel": "Next Step",
+        "dataType": "string",
+        "value": "",
+        "sourceSystem": "salesforce-fixture",
+        "capturedAt": "2026-05-30T12:00:00.000Z"
+      }
+    ],
+    "sourceItems": [
+      {
+        "id": "src-next-step-001",
+        "type": "CALL",
+        "visibility": "INTERNAL",
+        "title": "Buyer follow-up call",
+        "body": "Jane asked us to send the revised order form by Friday and schedule the security review for June 10.",
+        "occurredAt": "2026-05-29T18:00:00.000Z",
+        "ingestedAt": "2026-05-30T12:00:00.000Z",
+        "metadata": {
+          "sourceSystem": "gong-fixture",
+          "externalId": "gong-call-001",
+          "author": "Account Executive",
+          "authorizationScope": "deal-team",
+          "duplicateOf": null,
+          "linkedRecordExternalId": "006-acme-renewal"
+        }
+      }
+    ],
+    "activityHistory": [],
+    "warnings": []
+  },
+  "extractionRequests": [
+    {
+      "requestId": "extract-next-step",
+      "factTypes": ["NEXT_STEP", "NEXT_STEP_DATE"],
+      "targetFieldNames": ["NextStep", "NextStepDate__c"]
+    }
+  ],
+  "options": {
+    "referenceDate": "2026-05-30",
+    "timezone": "UTC"
+  }
+}
+```
+
+#### Output
+
+```json
+{
+  "runId": "structured-extraction-next-step-001",
+  "opportunityId": "opp-acme-renewal-2026",
+  "extractedFacts": [
+    {
+      "factId": "fact-next-step-001",
+      "requestId": "extract-next-step",
+      "factType": "NEXT_STEP",
+      "status": "EXTRACTED",
+      "normalizedValue": {
+        "type": "text",
+        "value": "Send the revised order form by Friday and schedule the security review for June 10."
+      },
+      "displayValue": "Send revised order form; schedule security review for June 10",
+      "crmFieldMapping": {
+        "fieldName": "NextStep",
+        "fieldLabel": "Next Step",
+        "dataType": "string",
+        "updateSemantics": "replace",
+        "currentCrmValue": "",
+        "proposedCrmValue": "Send revised order form; schedule security review for June 10",
+        "conflictPolicy": "only_if_blank"
+      },
+      "recommendationEligibility": {
+        "eligible": true,
+        "reasonCodes": ["CONFIDENCE_THRESHOLD_MET", "SUPPORTED_CRM_FIELD_MAPPING", "EVIDENCE_REQUIREMENTS_MET", "SOURCE_METADATA_REQUIREMENTS_MET", "CRM_VALUE_BLANK"],
+        "requiredReview": "none"
+      },
+      "confidence": 0.91,
+      "confidenceBand": "high",
+      "reasonCodes": ["DIRECT_STATEMENT", "RECENT_AUTHORITATIVE_SOURCE", "RECOMMENDATION_ELIGIBLE"],
+      "rationale": "The authorized call directly states the next action and the CRM field is blank.",
+      "evidence": [
+        {
+          "sourceItemId": "src-next-step-001",
+          "sourceType": "CALL",
+          "title": "Buyer follow-up call",
+          "occurredAt": "2026-05-29T18:00:00.000Z",
+          "matchedText": "send the revised order form by Friday and schedule the security review for June 10",
+          "normalizedEvidenceValue": {
+            "type": "text",
+            "value": "Send the revised order form by Friday and schedule the security review for June 10."
+          },
+          "author": "Account Executive",
+          "sourceSystem": "gong-fixture",
+          "externalId": "gong-call-001",
+          "linkedRecordExternalId": "006-acme-renewal"
+        }
+      ],
+      "sourceMetadata": [
+        {
+          "sourceItemId": "src-next-step-001",
+          "sourceSystem": "gong-fixture",
+          "externalId": "gong-call-001",
+          "sourceType": "CALL",
+          "visibility": "INTERNAL",
+          "authorizationScope": "deal-team",
+          "author": "Account Executive",
+          "occurredAt": "2026-05-29T18:00:00.000Z",
+          "ingestedAt": "2026-05-30T12:00:00.000Z",
+          "linkedRecordExternalId": "006-acme-renewal"
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}
+```
+
+### Example: CFO Approval
+
+#### Input
+
+```json
+{
+  "runId": "structured-extraction-cfo-001",
+  "dealContext": {
+    "opportunity": { "id": "opp-acme-renewal-2026", "name": "Acme Renewal 2026", "stage": "Proposal", "forecastCategory": "Commit", "amount": "125000", "closeDate": "2026-06-30" },
+    "account": { "id": "acct-acme", "name": "Acme Corp" },
+    "contacts": [],
+    "crmFieldSnapshots": [
+      { "id": "snap-cfo", "fieldName": "CFO_Approval_Status__c", "fieldLabel": "CFO Approval Status", "dataType": "picklist", "value": "Pending", "sourceSystem": "salesforce-fixture", "capturedAt": "2026-05-30T12:00:00.000Z" }
+    ],
+    "sourceItems": [
+      {
+        "id": "src-cfo-approval-001",
+        "type": "EMAIL",
+        "visibility": "CUSTOMER_SHARED",
+        "title": "Re: Renewal approval",
+        "body": "Our CFO approved the renewal amount this morning. Please send the final order form.",
+        "occurredAt": "2026-05-28T14:10:00.000Z",
+        "ingestedAt": "2026-05-30T12:00:00.000Z",
+        "metadata": { "sourceSystem": "gmail-fixture", "externalId": "gm-cfo-001", "author": "Jane Buyer", "authorizationScope": "deal-team", "duplicateOf": null, "linkedRecordExternalId": "006-acme-renewal" }
+      }
+    ],
+    "activityHistory": [],
+    "warnings": []
+  },
+  "extractionRequests": [
+    { "requestId": "extract-cfo", "factTypes": ["CFO_APPROVAL_STATUS"], "targetFieldNames": ["CFO_Approval_Status__c"] }
+  ]
+}
+```
+
+#### Output
+
+```json
+{
+  "runId": "structured-extraction-cfo-001",
+  "opportunityId": "opp-acme-renewal-2026",
+  "extractedFacts": [
+    {
+      "factId": "fact-cfo-approval-001",
+      "requestId": "extract-cfo",
+      "factType": "CFO_APPROVAL_STATUS",
+      "status": "EXTRACTED",
+      "normalizedValue": { "type": "enum", "value": "Approved", "enumSet": "CFOApprovalStatus" },
+      "displayValue": "CFO approved",
+      "crmFieldMapping": { "fieldName": "CFO_Approval_Status__c", "fieldLabel": "CFO Approval Status", "dataType": "picklist", "updateSemantics": "replace", "currentCrmValue": "Pending", "proposedCrmValue": "Approved", "conflictPolicy": "if_confidence_higher" },
+      "recommendationEligibility": { "eligible": true, "reasonCodes": ["CONFIDENCE_THRESHOLD_MET", "SUPPORTED_CRM_FIELD_MAPPING", "EVIDENCE_REQUIREMENTS_MET", "SOURCE_METADATA_REQUIREMENTS_MET", "CRM_VALUE_CONFLICTS_WITH_EVIDENCE"], "requiredReview": "none" },
+      "confidence": 0.93,
+      "confidenceBand": "high",
+      "reasonCodes": ["DIRECT_STATEMENT", "NORMALIZED_STATUS", "RECENT_AUTHORITATIVE_SOURCE", "RECOMMENDATION_ELIGIBLE"],
+      "rationale": "The customer-shared email directly states that CFO approval has been granted.",
+      "evidence": [
+        { "sourceItemId": "src-cfo-approval-001", "sourceType": "EMAIL", "title": "Re: Renewal approval", "occurredAt": "2026-05-28T14:10:00.000Z", "matchedText": "Our CFO approved the renewal amount this morning", "normalizedEvidenceValue": { "type": "enum", "value": "Approved", "enumSet": "CFOApprovalStatus" }, "author": "Jane Buyer", "sourceSystem": "gmail-fixture", "externalId": "gm-cfo-001", "linkedRecordExternalId": "006-acme-renewal" }
+      ],
+      "sourceMetadata": [
+        { "sourceItemId": "src-cfo-approval-001", "sourceSystem": "gmail-fixture", "externalId": "gm-cfo-001", "sourceType": "EMAIL", "visibility": "CUSTOMER_SHARED", "authorizationScope": "deal-team", "author": "Jane Buyer", "occurredAt": "2026-05-28T14:10:00.000Z", "ingestedAt": "2026-05-30T12:00:00.000Z", "linkedRecordExternalId": "006-acme-renewal" }
+      ]
+    }
+  ],
+  "warnings": []
+}
+```
+
+### Example: Procurement Blocker
+
+#### Input
+
+```json
+{
+  "runId": "structured-extraction-procurement-001",
+  "dealContext": {
+    "opportunity": { "id": "opp-acme-renewal-2026", "name": "Acme Renewal 2026", "stage": "Proposal", "forecastCategory": "Commit", "amount": "125000", "closeDate": "2026-06-30" },
+    "account": { "id": "acct-acme", "name": "Acme Corp" },
+    "contacts": [],
+    "crmFieldSnapshots": [
+      { "id": "snap-procurement", "fieldName": "Procurement_Blocker__c", "fieldLabel": "Procurement Blocker", "dataType": "string", "value": "", "sourceSystem": "salesforce-fixture", "capturedAt": "2026-05-30T12:00:00.000Z" }
+    ],
+    "sourceItems": [
+      {
+        "id": "src-procurement-001",
+        "type": "NOTE",
+        "visibility": "INTERNAL",
+        "title": "Procurement update",
+        "body": "Procurement cannot issue the PO until vendor onboarding is complete and tax forms are uploaded.",
+        "occurredAt": "2026-05-27T16:30:00.000Z",
+        "ingestedAt": "2026-05-30T12:00:00.000Z",
+        "metadata": { "sourceSystem": "salesforce-fixture", "externalId": "sf-note-proc-001", "author": "Account Executive", "authorizationScope": "deal-team", "duplicateOf": null, "linkedRecordExternalId": "006-acme-renewal" }
+      }
+    ],
+    "activityHistory": [],
+    "warnings": []
+  },
+  "extractionRequests": [
+    { "requestId": "extract-procurement", "factTypes": ["PROCUREMENT_BLOCKER"], "targetFieldNames": ["Procurement_Blocker__c"] }
+  ]
+}
+```
+
+#### Output
+
+```json
+{
+  "runId": "structured-extraction-procurement-001",
+  "opportunityId": "opp-acme-renewal-2026",
+  "extractedFacts": [
+    {
+      "factId": "fact-procurement-blocker-001",
+      "requestId": "extract-procurement",
+      "factType": "PROCUREMENT_BLOCKER",
+      "status": "EXTRACTED",
+      "normalizedValue": { "type": "process_status", "status": "Blocked", "blocker": "Vendor onboarding incomplete; tax forms not uploaded" },
+      "displayValue": "Blocked: vendor onboarding incomplete and tax forms not uploaded",
+      "crmFieldMapping": { "fieldName": "Procurement_Blocker__c", "fieldLabel": "Procurement Blocker", "dataType": "string", "updateSemantics": "replace", "currentCrmValue": "", "proposedCrmValue": "Vendor onboarding incomplete; tax forms not uploaded", "conflictPolicy": "only_if_blank" },
+      "recommendationEligibility": { "eligible": true, "reasonCodes": ["CONFIDENCE_THRESHOLD_MET", "SUPPORTED_CRM_FIELD_MAPPING", "EVIDENCE_REQUIREMENTS_MET", "SOURCE_METADATA_REQUIREMENTS_MET", "CRM_VALUE_BLANK"], "requiredReview": "none" },
+      "confidence": 0.89,
+      "confidenceBand": "high",
+      "reasonCodes": ["DIRECT_STATEMENT", "PROCESS_BLOCKER_IDENTIFIED", "RECENT_AUTHORITATIVE_SOURCE", "RECOMMENDATION_ELIGIBLE"],
+      "rationale": "The internal procurement update directly names the blocker preventing PO issuance.",
+      "evidence": [
+        { "sourceItemId": "src-procurement-001", "sourceType": "NOTE", "title": "Procurement update", "occurredAt": "2026-05-27T16:30:00.000Z", "matchedText": "cannot issue the PO until vendor onboarding is complete and tax forms are uploaded", "normalizedEvidenceValue": { "type": "process_status", "status": "Blocked", "blocker": "Vendor onboarding incomplete; tax forms not uploaded" }, "author": "Account Executive", "sourceSystem": "salesforce-fixture", "externalId": "sf-note-proc-001", "linkedRecordExternalId": "006-acme-renewal" }
+      ],
+      "sourceMetadata": [
+        { "sourceItemId": "src-procurement-001", "sourceSystem": "salesforce-fixture", "externalId": "sf-note-proc-001", "sourceType": "NOTE", "visibility": "INTERNAL", "authorizationScope": "deal-team", "author": "Account Executive", "occurredAt": "2026-05-27T16:30:00.000Z", "ingestedAt": "2026-05-30T12:00:00.000Z", "linkedRecordExternalId": "006-acme-renewal" }
+      ]
+    }
+  ],
+  "warnings": []
+}
+```
+
+### Example: Legal Pending
+
+#### Input
+
+```json
+{
+  "runId": "structured-extraction-legal-001",
+  "dealContext": {
+    "opportunity": { "id": "opp-acme-renewal-2026", "name": "Acme Renewal 2026", "stage": "Proposal", "forecastCategory": "Commit", "amount": "125000", "closeDate": "2026-06-30" },
+    "account": { "id": "acct-acme", "name": "Acme Corp" },
+    "contacts": [],
+    "crmFieldSnapshots": [
+      { "id": "snap-legal", "fieldName": "Legal_Pending_Item__c", "fieldLabel": "Legal Pending Item", "dataType": "string", "value": "", "sourceSystem": "salesforce-fixture", "capturedAt": "2026-05-30T12:00:00.000Z" }
+    ],
+    "sourceItems": [
+      {
+        "id": "src-legal-001",
+        "type": "EMAIL",
+        "visibility": "INTERNAL",
+        "title": "MSA review",
+        "body": "Legal is still reviewing the data processing addendum; no redlines are expected before Tuesday.",
+        "occurredAt": "2026-05-26T21:45:00.000Z",
+        "ingestedAt": "2026-05-30T12:00:00.000Z",
+        "metadata": { "sourceSystem": "gmail-fixture", "externalId": "gm-legal-001", "author": "Account Executive", "authorizationScope": "deal-team", "duplicateOf": null, "linkedRecordExternalId": "006-acme-renewal" }
+      }
+    ],
+    "activityHistory": [],
+    "warnings": []
+  },
+  "extractionRequests": [
+    { "requestId": "extract-legal", "factTypes": ["LEGAL_PENDING_ITEM"], "targetFieldNames": ["Legal_Pending_Item__c"] }
+  ],
+  "options": { "referenceDate": "2026-05-30", "timezone": "UTC" }
+}
+```
+
+#### Output
+
+```json
+{
+  "runId": "structured-extraction-legal-001",
+  "opportunityId": "opp-acme-renewal-2026",
+  "extractedFacts": [
+    {
+      "factId": "fact-legal-pending-001",
+      "requestId": "extract-legal",
+      "factType": "LEGAL_PENDING_ITEM",
+      "status": "EXTRACTED",
+      "normalizedValue": { "type": "process_status", "status": "Pending", "owner": "Legal", "blocker": "Data processing addendum review" },
+      "displayValue": "Legal pending: data processing addendum review",
+      "crmFieldMapping": { "fieldName": "Legal_Pending_Item__c", "fieldLabel": "Legal Pending Item", "dataType": "string", "updateSemantics": "replace", "currentCrmValue": "", "proposedCrmValue": "Data processing addendum review", "conflictPolicy": "manual_review_required" },
+      "recommendationEligibility": { "eligible": true, "reasonCodes": ["CONFIDENCE_THRESHOLD_MET", "SUPPORTED_CRM_FIELD_MAPPING", "EVIDENCE_REQUIREMENTS_MET", "SOURCE_METADATA_REQUIREMENTS_MET", "LEGAL_REVIEW_REQUIRED"], "requiredReview": "legal_review" },
+      "confidence": 0.86,
+      "confidenceBand": "high",
+      "reasonCodes": ["DIRECT_STATEMENT", "PROCESS_BLOCKER_IDENTIFIED", "RECENT_AUTHORITATIVE_SOURCE", "RECOMMENDATION_ELIGIBLE"],
+      "rationale": "The authorized email directly states that legal review is pending for the data processing addendum; recommendation requires legal review before CRM update.",
+      "evidence": [
+        { "sourceItemId": "src-legal-001", "sourceType": "EMAIL", "title": "MSA review", "occurredAt": "2026-05-26T21:45:00.000Z", "matchedText": "Legal is still reviewing the data processing addendum", "normalizedEvidenceValue": { "type": "process_status", "status": "Pending", "owner": "Legal", "blocker": "Data processing addendum review" }, "author": "Account Executive", "sourceSystem": "gmail-fixture", "externalId": "gm-legal-001", "linkedRecordExternalId": "006-acme-renewal" }
+      ],
+      "sourceMetadata": [
+        { "sourceItemId": "src-legal-001", "sourceSystem": "gmail-fixture", "externalId": "gm-legal-001", "sourceType": "EMAIL", "visibility": "INTERNAL", "authorizationScope": "deal-team", "author": "Account Executive", "occurredAt": "2026-05-26T21:45:00.000Z", "ingestedAt": "2026-05-30T12:00:00.000Z", "linkedRecordExternalId": "006-acme-renewal" }
+      ]
+    }
+  ],
+  "warnings": []
+}
+```
+
+### Example: No Extractable Facts
+
+#### Input
+
+```json
+{
+  "runId": "structured-extraction-empty-001",
+  "dealContext": {
+    "opportunity": { "id": "opp-acme-renewal-2026", "name": "Acme Renewal 2026", "stage": "Proposal", "forecastCategory": "Commit", "amount": "125000", "closeDate": "2026-06-30" },
+    "account": { "id": "acct-acme", "name": "Acme Corp" },
+    "contacts": [],
+    "crmFieldSnapshots": [],
+    "sourceItems": [
+      {
+        "id": "src-empty-001",
+        "type": "NOTE",
+        "visibility": "INTERNAL",
+        "title": "General account note",
+        "body": "Customer mentioned they enjoyed the conference booth and will read the newsletter.",
+        "occurredAt": "2026-05-25T10:00:00.000Z",
+        "ingestedAt": "2026-05-30T12:00:00.000Z",
+        "metadata": { "sourceSystem": "salesforce-fixture", "externalId": "sf-note-empty-001", "author": "Account Executive", "authorizationScope": "deal-team", "duplicateOf": null, "linkedRecordExternalId": "006-acme-renewal" }
+      }
+    ],
+    "activityHistory": [],
+    "warnings": []
+  },
+  "extractionRequests": [
+    { "requestId": "extract-default", "factTypes": ["NEXT_STEP", "CFO_APPROVAL_STATUS", "PROCUREMENT_BLOCKER", "LEGAL_PENDING_ITEM"] }
+  ]
+}
+```
+
+#### Output
+
+```json
+{
+  "runId": "structured-extraction-empty-001",
+  "opportunityId": "opp-acme-renewal-2026",
+  "extractedFacts": [],
+  "warnings": [
+    {
+      "code": "NO_EXTRACTABLE_FACTS",
+      "severity": "info",
+      "message": "No authorized source content contained a supported structured fact for the requested fact types.",
+      "affectedRecordIds": ["src-empty-001"]
+    }
+  ]
+}
+```
