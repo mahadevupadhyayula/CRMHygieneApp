@@ -2049,3 +2049,16 @@ compareFields({
 The agent only considers facts whose validation result is not `rejected`, whose source match status is `matched`, and whose validation evidence status is not `stale`. It emits schema-validated `FieldComparison` objects containing the CRM field, current CRM value, extracted value, issue type, severity, evidence metadata, and recommendation eligibility.
 
 The comparison layer does not write to Prisma, calculate hygiene scores, create recommendations, request approvals, or write back to CRM.
+
+## Stage 8 — Hygiene Scoring Contract
+
+`lib/agents/scoring` exposes `scoreOpportunity(input)` and `ScoringAgent.scoreOpportunity(input)`. The scoring contract accepts opportunity context, CRM snapshots, contacts, source items, extracted facts, validation results, Stage 7 field comparisons, and optional dimension weights. It returns a schema-validated `HygieneScoreResult` containing:
+
+- `score`: integer from 0 to 100;
+- `riskLevel`: `Low`, `Medium`, `High`, or `Critical`;
+- `riskPoints`: deterministic risk contribution total;
+- `dimensions`: one score object for each PRD hygiene dimension;
+- `explanation`: human-readable summary of score, risk, weakest dimensions, and major risk drivers;
+- `evidence`: field/fact/source-backed evidence items.
+
+The scoring contract is deterministic and non-persistent. It must not create recommendations, request approvals, write audit events, or write back to CRM. Missing source data can reduce hygiene dimensions, but must not create unsupported blocker or contradiction risk.

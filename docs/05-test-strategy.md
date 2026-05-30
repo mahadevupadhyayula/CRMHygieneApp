@@ -79,3 +79,7 @@ Stage 6 test files include focused unit coverage for all requested validation ch
 - Integration tests for CRM adapter, approval, and other workflow boundaries after Stage 1 database coverage is in place.
 - E2E tests for user journeys across dashboard, deal review, approvals, and settings.
 - Golden tests and evals for agent recommendation quality.
+
+## Stage 8 — Hygiene Scoring and Forecast Risk
+
+Stage 8 tests cover the pure scoring agent and fixture-backed end-to-end flow from ingestion through extraction, validation, comparison, and scoring. Coverage includes healthy-score bounds, next-step clarity, forecast contradictions, close-date pressure, procurement/legal/security blockers, stakeholder and owner gaps, issue resolution, 0–100 clamping, missing-data guardrails, duplicate issue handling, admin-configured weights, and seeded deal scenarios for healthy, procurement-blocked, no-note, and contradictory-note opportunities.
