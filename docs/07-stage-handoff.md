@@ -24,7 +24,7 @@ Stage 0 initialized the CRM Hygiene Agent repository as a Next.js + TypeScript a
 
 - CRM integrations, authentication, production data models, agent orchestration, and deployment configuration are not implemented in Stage 0.
 - Prisma contains only a SQLite datasource and client generator placeholder; no application models exist yet.
-- Stage docs after Stage 0 are placeholders and should be expanded when the execution plan for each stage is finalized.
+- Stage docs after Stage 0 should be expanded as each execution plan is finalized; Stage 1 is now defined as data model and seed fixture work.
 
 ### Decisions
 
@@ -35,4 +35,6 @@ Stage 0 initialized the CRM Hygiene Agent repository as a Next.js + TypeScript a
 
 ### Next Stage Recommendation
 
-Proceed to Stage 1 by defining CRM adapter interfaces, fixture CRM payloads, and the first typed ingestion contracts before adding persistent production models or agent recommendation logic.
+- Stage 1 — Data Model and Seed Fixture Data
+
+Focus only on Prisma models, deterministic seed fixture data, and related unit/integration tests before adding CRM adapter work or agent recommendation logic.
