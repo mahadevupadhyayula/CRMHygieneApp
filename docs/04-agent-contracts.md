@@ -2031,3 +2031,21 @@ validateFacts({
   sources: [{ id: "src-email-1", visibility: "TEAM", metadata: { authorization: { authorized: true, scope: "team" } } }]
 });
 ```
+
+## Stage 7 — Comparison Agent Contract
+
+`ComparisonAgent` compares Stage 6 validation output against current CRM opportunity fields.
+
+```ts
+compareFields({
+  opportunity,
+  crmSnapshot,
+  facts,
+  validationResults,
+  options,
+}): FieldComparison[]
+```
+
+The agent only considers facts whose validation result is not `rejected`, whose source match status is `matched`, and whose validation evidence status is not `stale`. It emits schema-validated `FieldComparison` objects containing the CRM field, current CRM value, extracted value, issue type, severity, evidence metadata, and recommendation eligibility.
+
+The comparison layer does not write to Prisma, calculate hygiene scores, create recommendations, request approvals, or write back to CRM.
