@@ -578,3 +578,22 @@ Implemented `lib/agents/comparison` as the deterministic comparison layer betwee
 - Persistence remains out of scope for Stage 7. Future stages can map the pure output into the Prisma `FieldComparison` table.
 - Recommendation generation should honor `recommendationEligible`; low-confidence or review-only comparisons should not be auto-applied.
 - The comparison heuristics are deterministic and intentionally conservative. Add new fact types or CRM field mappings in `lib/agents/comparison/index.ts` before broadening recommendation behavior.
+
+## Stage 8 — Hygiene Score and Forecast Risk Engine Handoff
+
+Implemented `lib/agents/scoring` as the deterministic hygiene scoring and forecast risk layer on top of Stage 6 validation and Stage 7 comparisons.
+
+### Delivered
+
+- Added schema-validated `HygieneScoreResult` output with overall score, risk level, risk points, dimension scores, explanation, and auditable evidence.
+- Added all eight PRD hygiene dimensions: completeness, freshness, consistency, forecast support, risk visibility, next-step clarity, stakeholder clarity, and coordination readiness.
+- Added forecast risk classification across Low, Medium, High, and Critical levels.
+- Grounded score explanations in CRM fields, field comparisons, extracted facts, source IDs, validation evidence, and source snippets where available.
+- Added score clamping, duplicate-issue de-duping, missing-data guardrails, blocker compounding, close-date pressure handling, and admin-configured dimension weights.
+- Added Stage 8 unit and fixture-backed integration coverage.
+
+### Next Stage Notes
+
+- Persistence remains out of scope for Stage 8. Future stages can map `HygieneScoreResult` into the Prisma `HygieneScore` table and related recommendation records.
+- Recommendation generation should consume dimension evidence and `riskLevel`; it should not recreate unsupported risks from missing source data.
+- If new comparison issue types or extracted fact types are added, update the scoring dimension mapping and risk contribution rules in `lib/agents/scoring/index.ts`.
