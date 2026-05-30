@@ -1,8 +1,6 @@
 import { PrismaClient, SourceType, SourceVisibility } from "@prisma/client";
 
-const prisma = new PrismaClient();
-
-const BASE_NOW = new Date("2026-05-30T12:00:00.000Z");
+export const BASE_NOW = new Date("2026-05-30T12:00:00.000Z");
 
 function daysFromBase(days: number): Date {
   const date = new Date(BASE_NOW);
@@ -44,7 +42,7 @@ function metadata(params: {
   });
 }
 
-type ContactFixture = {
+export type ContactFixture = {
   externalId: string;
   firstName: string;
   lastName: string;
@@ -54,7 +52,7 @@ type ContactFixture = {
   isPrimary?: boolean;
 };
 
-type SourceFixture = {
+export type SourceFixture = {
   externalId: string;
   type: SourceType;
   visibility: SourceVisibility;
@@ -70,14 +68,14 @@ type SourceFixture = {
   matchedText?: string;
 };
 
-type SnapshotFixture = {
+export type SnapshotFixture = {
   fieldName: string;
   fieldLabel: string;
   dataType: string;
   value: string;
 };
 
-type OpportunityFixture = {
+export type OpportunityFixture = {
   externalId: string;
   account: {
     externalId: string;
@@ -106,14 +104,14 @@ type OpportunityFixture = {
   sources: SourceFixture[];
 };
 
-const defaultSnapshots = (stage: string, forecastCategory: string, amount: number, closeDate: Date): SnapshotFixture[] => [
+export const defaultSnapshots = (stage: string, forecastCategory: string, amount: number, closeDate: Date): SnapshotFixture[] => [
   { fieldName: "StageName", fieldLabel: "Stage", dataType: "picklist", value: stage },
   { fieldName: "ForecastCategoryName", fieldLabel: "Forecast Category", dataType: "picklist", value: forecastCategory },
   { fieldName: "Amount", fieldLabel: "Amount", dataType: "currency", value: String(amount) },
   { fieldName: "CloseDate", fieldLabel: "Close Date", dataType: "date", value: closeDate.toISOString().slice(0, 10) },
 ];
 
-const fixtures: OpportunityFixture[] = [
+export const fixtures: OpportunityFixture[] = [
   {
     externalId: "OPP-001-HEALTHY",
     account: { externalId: "ACC-001", name: "Northstar Analytics", website: "https://northstar.example", industry: "Software", segment: "Enterprise", ownerName: "Alex Rivera" },
@@ -376,8 +374,7 @@ const fixtures: OpportunityFixture[] = [
   },
 ];
 
-async function main() {
-  console.log(`Seeding deterministic CRM hygiene fixtures anchored at ${BASE_NOW.toISOString()}`);
+export async function seedCrmFixtures(prisma: PrismaClient) {
 
   await prisma.feedbackEvent.deleteMany();
   await prisma.auditEvent.deleteMany();
@@ -496,14 +493,24 @@ async function main() {
   const opportunityCount = await prisma.opportunity.count();
   const snapshotCount = await prisma.cRMFieldSnapshot.count();
   const sourceCount = await prisma.sourceItem.count();
-  console.log(`Seeded ${opportunityCount} opportunities, ${snapshotCount} CRM field snapshots, and ${sourceCount} source items.`);
+  return { opportunityCount, snapshotCount, sourceCount };
 }
 
-main()
-  .catch((error) => {
+async function main() {
+  const prisma = new PrismaClient();
+  console.log(`Seeding deterministic CRM hygiene fixtures anchored at ${BASE_NOW.toISOString()}`);
+
+  try {
+    const { opportunityCount, snapshotCount, sourceCount } = await seedCrmFixtures(prisma);
+    console.log(`Seeded ${opportunityCount} opportunities, ${snapshotCount} CRM field snapshots, and ${sourceCount} source items.`);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+if (process.argv[1]?.endsWith("seed.ts")) {
+  main().catch((error) => {
     console.error(error);
     process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
   });
+}
