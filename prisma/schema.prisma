@@ -4,5 +4,292 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = env("DATABASE_URL")
+}
+
+enum OpportunityStage {
+  PROSPECTING
+  QUALIFICATION
+  DISCOVERY
+  PROPOSAL
+  NEGOTIATION
+  PROCUREMENT
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+enum ForecastCategory {
+  PIPELINE
+  BEST_CASE
+  COMMIT
+  CLOSED
+  OMITTED
+}
+
+enum SourceItemType {
+  NOTE
+  EMAIL
+  CALL
+  MEETING
+  CRM_UPDATE
+  SUPPORT_TICKET
+  DOCUMENT
+}
+
+enum SourceVisibility {
+  PUBLIC
+  INTERNAL
+  PRIVATE
+  RESTRICTED
+}
+
+enum SourceAuthorization {
+  AUTHORIZED
+  UNAUTHORIZED
+  NEEDS_REVIEW
+}
+
+enum RecommendationStatus {
+  OPEN
+  ACCEPTED
+  REJECTED
+  APPLIED
+  DISMISSED
+}
+
+enum ApprovalStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum AuditEventType {
+  SEED_CREATED
+  SNAPSHOT_RECORDED
+  FACT_EXTRACTED
+  FIELD_COMPARED
+  SCORE_CALCULATED
+  RECOMMENDATION_CREATED
+  APPROVAL_REQUESTED
+  APPROVAL_DECIDED
+  FEEDBACK_RECORDED
+}
+
+model Account {
+  id             String             @id @default(cuid())
+  name           String
+  industry       String
+  segment        String
+  region         String
+  website        String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  contacts       Contact[]
+  opportunities  Opportunity[]
+  sourceItems    SourceItem[]
+  auditEvents    AuditEvent[]
+  feedbackEvents FeedbackEvent[]
+}
+
+model Contact {
+  id             String             @id @default(cuid())
+  accountId      String
+  firstName      String
+  lastName       String
+  title          String
+  email          String
+  phone          String?
+  isDecisionMaker Boolean           @default(false)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  account        Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  opportunities  Opportunity[]      @relation("OpportunityContacts")
+  sourceItems    SourceItem[]
+  auditEvents    AuditEvent[]
+  feedbackEvents FeedbackEvent[]
+
+  @@unique([accountId, email])
+}
+
+model Opportunity {
+  id                String              @id @default(cuid())
+  accountId         String
+  ownerName         String
+  name              String
+  scenarioKey       String              @unique
+  amountCents       Int
+  currency          String              @default("USD")
+  stage             OpportunityStage
+  forecastCategory  ForecastCategory
+  closeDate         DateTime
+  nextStep          String?
+  nextStepDueAt     DateTime?
+  lastActivityAt    DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  account           Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contacts          Contact[]           @relation("OpportunityContacts")
+  crmFieldSnapshots CRMFieldSnapshot[]
+  sourceItems       SourceItem[]
+  extractedFacts    ExtractedFact[]
+  fieldComparisons  FieldComparison[]
+  hygieneScores     HygieneScore[]
+  recommendations   Recommendation[]
+  approvalActions   ApprovalAction[]
+  auditEvents       AuditEvent[]
+  feedbackEvents    FeedbackEvent[]
+}
+
+model CRMFieldSnapshot {
+  id            String      @id @default(cuid())
+  opportunityId String
+  fieldName     String
+  fieldValue    String?
+  capturedAt    DateTime
+  sourceSystem  String      @default("seed-crm")
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@index([opportunityId, fieldName])
+}
+
+model SourceItem {
+  id                String           @id @default(cuid())
+  accountId         String?
+  contactId         String?
+  opportunityId     String?
+  type              SourceItemType
+  visibility        SourceVisibility
+  authorName        String
+  authorEmail       String
+  occurredAt        DateTime
+  title             String
+  body              String
+  sourceSystem      String
+  externalId        String
+  linkedRecordType  String
+  linkedRecordId    String
+  authorization     SourceAuthorization @default(AUTHORIZED)
+  isAuthorized      Boolean          @default(true)
+  createdAt         DateTime         @default(now())
+  account           Account?         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contact           Contact?         @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  opportunity       Opportunity?     @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  extractedFacts    ExtractedFact[]
+  fieldComparisons  FieldComparison[]
+  recommendations   Recommendation[]
+  auditEvents       AuditEvent[]
+
+  @@unique([sourceSystem, externalId])
+  @@index([opportunityId, occurredAt])
+}
+
+model ExtractedFact {
+  id             String      @id @default(cuid())
+  opportunityId  String
+  sourceItemId   String
+  factType       String
+  factValue      String
+  confidence     Float
+  extractedAt    DateTime
+  opportunity    Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  sourceItem      SourceItem  @relation(fields: [sourceItemId], references: [id], onDelete: Cascade)
+
+  @@index([opportunityId, factType])
+}
+
+model FieldComparison {
+  id              String      @id @default(cuid())
+  opportunityId   String
+  sourceItemId    String?
+  fieldName       String
+  crmValue        String?
+  evidenceValue   String?
+  isMismatch      Boolean
+  severity        String
+  rationale       String
+  comparedAt      DateTime
+  opportunity     Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  sourceItem       SourceItem? @relation(fields: [sourceItemId], references: [id], onDelete: SetNull)
+
+  @@index([opportunityId, fieldName])
+}
+
+model HygieneScore {
+  id             String      @id @default(cuid())
+  opportunityId  String
+  score          Int
+  grade          String
+  reasonSummary  String
+  calculatedAt   DateTime
+  opportunity    Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@index([opportunityId, calculatedAt])
+}
+
+model Recommendation {
+  id             String               @id @default(cuid())
+  opportunityId  String
+  sourceItemId   String?
+  status         RecommendationStatus @default(OPEN)
+  fieldName      String
+  currentValue   String?
+  recommendedValue String?
+  rationale      String
+  confidence     Float
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  opportunity    Opportunity          @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  sourceItem      SourceItem?          @relation(fields: [sourceItemId], references: [id], onDelete: SetNull)
+  approvalActions ApprovalAction[]
+  feedbackEvents  FeedbackEvent[]
+}
+
+model ApprovalAction {
+  id               String         @id @default(cuid())
+  opportunityId    String
+  recommendationId String
+  status           ApprovalStatus @default(REQUESTED)
+  requestedBy      String
+  decidedBy        String?
+  requestedAt      DateTime       @default(now())
+  decidedAt        DateTime?
+  notes            String?
+  opportunity      Opportunity    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  recommendation   Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+}
+
+model AuditEvent {
+  id             String         @id @default(cuid())
+  accountId      String?
+  contactId      String?
+  opportunityId  String?
+  sourceItemId   String?
+  eventType      AuditEventType
+  actor          String
+  message        String
+  metadataJson   String
+  createdAt      DateTime       @default(now())
+  account        Account?       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contact        Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  opportunity    Opportunity?   @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  sourceItem     SourceItem?    @relation(fields: [sourceItemId], references: [id], onDelete: SetNull)
+
+  @@index([eventType, createdAt])
+}
+
+model FeedbackEvent {
+  id               String          @id @default(cuid())
+  accountId        String?
+  contactId        String?
+  opportunityId    String?
+  recommendationId String?
+  actor            String
+  rating           Int
+  comment          String
+  createdAt        DateTime        @default(now())
+  account          Account?        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contact          Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  opportunity      Opportunity?    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  recommendation   Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
 }
