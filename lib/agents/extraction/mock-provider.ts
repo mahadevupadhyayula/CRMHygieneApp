@@ -124,11 +124,14 @@ function extractStatusFacts(text: string): FactCandidate[] {
 function extractKeywordFacts(text: string): FactCandidate[] {
   const candidates: FactCandidate[] = [];
   addKeywordFact(candidates, text, "risk", /\b(blocked|blocker|at risk|concern|delay|delayed|slipping|stalled)\b/i, 0.68);
+  addKeywordFact(candidates, text, "risk", /\b(?:budget\s+pushed|competitor\s+mentioned|discount\s+requested)\b/i, 0.68);
   addKeywordFact(candidates, text, "risk_severity", /\b(critical|high|medium|low)\s+risk\b/i, 0.7, (match) => normalizeSeverity(match[1]));
   addKeywordFact(candidates, text, "timeline_signal", /\b(this quarter|next quarter|end of month|by (?:monday|tuesday|wednesday|thursday|friday)|go-live|launch)\b/i, 0.66);
   addKeywordFact(candidates, text, "close_date_risk", /\b(close date|closing)\s+(?:is\s+)?(?:at risk|slipping|pushed|delayed)\b/i, 0.72);
   addKeywordFact(candidates, text, "stage_signal", /\b(?:ready for|moving to|moved to|exit criteria for)\s+([A-Za-z][A-Za-z\s-]{2,40})\b/i, 0.64, (match) => normalizeValue(match[1]));
-  addKeywordFact(candidates, text, "forecast_signal", /\b(commit|best case|pipeline|forecast)\b/i, 0.62);
+  addKeywordFact(candidates, text, "decision_maker", /\b(CFO|CEO|CIO|CTO|COO|CISO)\b(?=\s+approval\s+required)/i, 0.7);
+  addKeywordFact(candidates, text, "next_step", /\bfollow\s+up\s+soon\b/i, 0.45);
+  addKeywordFact(candidates, text, "procurement_status", /\brequested\s+by\s+procurement\b/i, 0.68);
   addKeywordFact(candidates, text, "internal_owner_needed", /\bneed(?:s|ed)?\s+(?:an?\s+)?internal\s+owner\b/i, 0.76, () => "true");
   return candidates;
 }
@@ -139,10 +142,11 @@ function addKeywordFact(candidates: FactCandidate[], text: string, factType: Ext
     return;
   }
   const rawValue = cleanValue(match[0]);
+  const normalizedValue = normalize ? normalize(match) : normalizeValue(rawValue);
   candidates.push({
     factType,
     rawValue,
-    normalizedValue: normalize ? normalize(match) : normalizeValue(rawValue),
+    normalizedValue,
     confidence,
     startIndex: match.index,
   });
