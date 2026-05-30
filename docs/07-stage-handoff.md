@@ -76,25 +76,25 @@ This stage intentionally stops at assembling source context. Extraction, scoring
 
 ### Next Recommended Stage
 
-Stage 3 — Hygiene Extraction and Rules
+Stage 3 — Deal-to-Source Matching Agent
 
-The next stage should consume `DealContextPackage` output and add the first extraction/rules layer without implementing recommendation writeback. Recommended Stage 3 outcomes:
+The next stage should consume authorized source context and candidate CRM records to map loose source items to the correct opportunity without implementing extraction, scoring, recommendations, or writeback. Recommended Stage 3 outcomes:
 
-- Define extractor inputs/outputs for source-derived facts, evidence spans, confidence, and target CRM fields.
-- Implement deterministic extraction logic for the Stage 1 edge cases, such as decision maker, next step, close date, stage, forecast, procurement, legal, security, and stale-activity signals.
-- Persist or return `ExtractedFact` and `FieldComparison` records only after the extraction contract is finalized.
-- Add tests that prove extraction and comparison consume only authorized, non-duplicate source items from Stage 2 ingestion.
-- Continue to defer scoring, recommendation generation, approval workflows, and CRM writeback until later stages.
+- Define the `SourceMatch` output contract for matched, unmatched, and ambiguous source items.
+- Evaluate matching signals such as direct CRM relationships, account names, opportunity names, contact email domains, contact name mentions, owner/team metadata, timestamp proximity, and keyword references.
+- Ensure private or unauthorized sources are never matched or attached to opportunities.
+- Keep ambiguous context out of automatic attachments and route it to review instead.
+- Preserve unmatched sources as reviewable records for manual resolution or future matching improvements.
 
 ### Context for the Next Codex Session
 
-- Start by reading `docs/stages/stage-03-hygiene-rules.md`, `docs/04-agent-contracts.md`, `docs/03-data-model.md`, `lib/agents/ingestion/index.ts`, `lib/agents/ingestion/schemas.ts`, `lib/agents/ingestion/types.ts`, and `tests/unit/stage2-ingestion.test.ts`.
-- Treat `DealContextPackage` as the Stage 2 output contract for downstream extraction work.
+- Start by reading `docs/stages/stage-03-matching.md`, `docs/04-agent-contracts.md`, `docs/03-data-model.md`, `lib/agents/ingestion/index.ts`, `lib/agents/ingestion/schemas.ts`, `lib/agents/ingestion/types.ts`, and `tests/unit/stage2-ingestion.test.ts`.
+- Treat authorized Stage 2 source context as input for downstream deal-to-source matching work.
 - Preserve Stage 1 fixture IDs, `BASE_NOW = 2026-05-30T12:00:00.000Z`, and deterministic sorting unless every dependent test is intentionally updated.
 - Use `ingestDealContext` for database-backed ingestion and `buildDealContextPackage` for unit tests that do not need Prisma I/O.
-- Keep private and unauthorized source items out of extraction inputs; assertions should use the Stage 2 metadata counts and warnings when validating this behavior.
+- Keep private and unauthorized source items out of matching inputs and outputs; assertions should use the Stage 2 metadata counts and warnings when validating this behavior.
 - Extraction, scoring, recommendations, approvals, audit-event generation, feedback loops, review UI, and writeback are still not implemented. The next session should not imply these capabilities exist until their stages add them.
-- Re-run `npm run prisma:validate` and `npm test` after changing schema, seed, ingestion, extraction, or rules code.
+- Re-run `npm run prisma:validate` and `npm test` after changing schema, seed, ingestion, matching, extraction, or rules code.
 
 ## Stage 1 — Data Model and Seed Fixture Data
 
