@@ -2,9 +2,99 @@
 
 ## Current Stage Completed
 
-Stage 1 — Data Model and Seed Fixture Data
+Stage 2 — Ingestion Agent
 
-Stage 1 is complete because the Prisma schema, deterministic seed data, Stage 1 unit/integration tests, and this handoff documentation are all present and have been validated.
+Stage 2 is complete because the ingestion agent now loads a CRM opportunity graph, converts it into a validated `DealContextPackage`, filters unauthorized evidence, suppresses duplicate source items, emits deterministic warnings, and is covered by Stage 2 unit tests plus the existing Stage 1 fixture/integration suite.
+
+## Stage 2 — Ingestion Agent
+
+### Summary of Ingestion Behavior
+
+Stage 2 adds a deterministic ingestion boundary that prepares Stage 1 CRM fixture data for later extraction and hygiene workflows. The ingestion agent:
+
+- Exposes `ingestDealContext(prisma, opportunityId)` to fetch an opportunity with its account, contacts, CRM field snapshots, and source items, then return a validated `DealContextPackage`.
+- Throws `OpportunityNotFoundError` when the requested opportunity does not exist.
+- Exposes `buildDealContextPackage(opportunity, generatedAt)` so tests and future callers can build packages from already-loaded records.
+- Normalizes opportunity, account, contact, CRM snapshot, source item, and activity-history data into a stable contract validated by Zod schemas.
+- Sorts contacts with primary contacts first, then by role/name/email/id; sorts CRM snapshots and source items newest-first with deterministic tie breakers; and builds activity history from included source items.
+- Parses source metadata JSON, preserves supported metadata such as author, external ID, source system, linked record, authorization, duplicate reference, and matched text, and warns when metadata is missing, unparseable, unsupported, or incomplete.
+- Excludes private source items and source items marked unauthorized by metadata.
+- Suppresses duplicate source items through explicit `duplicateOf` metadata and a normalized title/body/timestamp fallback key.
+- Emits warnings for missing account context, missing contacts, missing CRM snapshots, missing authorized source items, missing source timestamps, missing source author metadata, incomplete metadata, private-source exclusions, unauthorized-source exclusions, and duplicate-source suppression.
+- Produces package metadata with `opportunityId`, `generatedAt`, included source count, excluded source count, and duplicate source count.
+
+This stage intentionally stops at assembling source context. Extraction, scoring, recommendations, approval workflows, and CRM writeback remain unimplemented.
+
+### Files Changed
+
+- `lib/agents/ingestion/index.ts` — Stage 2 ingestion implementation, opportunity loading, context-package construction, source filtering, deduplication, sorting, metadata parsing, and warnings.
+- `lib/agents/ingestion/schemas.ts` — Zod schemas for source metadata, warnings, context records, activity history, package metadata, and the full `DealContextPackage`.
+- `lib/agents/ingestion/types.ts` — exported TypeScript types inferred from the ingestion schemas plus the documented not-found error.
+- `tests/unit/stage2-ingestion.test.ts` — Stage 2 ingestion unit coverage using synthetic records and Stage 1 fixture-derived opportunities.
+- `tests/integration/stage1-seed.test.ts` — expanded Stage 1 seed integration assertions that continue to validate fixture persistence and ingestion-ready edge cases.
+- `docs/07-stage-handoff.md` — updated handoff for the completed Stage 2 ingestion agent.
+
+### Tests Added
+
+- Added Stage 2 unit tests for deterministic package construction and Zod validation.
+- Added coverage that all authorized non-private Stage 1 source types represented by the fixtures are included.
+- Added coverage for private-source and unauthorized-source exclusion.
+- Added coverage for duplicate source suppression through explicit metadata and normalized content fallback.
+- Added coverage for deterministic source sorting and activity-history ordering.
+- Added warning coverage for opportunities with no source notes, no CRM snapshots, no contacts, missing source timestamps, missing source authors, and incomplete source metadata.
+- Added coverage for `OpportunityNotFoundError` when `ingestDealContext` cannot find the requested opportunity.
+- Kept the Stage 1 fixture and seed tests passing to ensure Stage 2 did not regress fixture structure or persistence.
+
+### Test Commands Run and Results
+
+- `npm run prisma:validate` — passed. Prisma loaded `.env`, read `prisma/schema.prisma`, and reported the schema is valid. npm also printed a non-blocking warning about the unknown `http-proxy` env config.
+- `npm test` — passed. The `pretest` hook generated Prisma Client successfully, then Vitest ran 4 test files and 29 tests successfully:
+  - `tests/unit/stage2-ingestion.test.ts` — 15 passed.
+  - `tests/integration/stage1-seed.test.ts` — 9 passed.
+  - `tests/unit/stage1-fixtures.test.ts` — 4 passed.
+  - `tests/unit/smoke.test.ts` — 1 passed.
+
+### Known Limitations
+
+- The ingestion agent currently consumes records already stored in the local Prisma database; it does not call Salesforce, HubSpot, email, calendar, support, document, or web APIs.
+- Source authorization is enforced only through `SourceVisibility.PRIVATE` and fixture metadata flags; there is no OAuth, tenant policy, row-level permission, or user-specific entitlement layer yet.
+- Metadata parsing supports the Stage 1 fixture metadata shape and flexible passthrough fields, but there is no versioned external-source metadata contract yet.
+- Deduplication is intentionally lightweight and deterministic; it does not perform fuzzy semantic matching or cross-system entity resolution.
+- Activity history is derived from source items only; no separate calendar/event/task timeline adapter exists yet.
+- The ingestion package contains raw context only. Extraction, scoring, recommendations, approvals, audit-event creation, feedback loops, UI review flows, and CRM writeback remain unimplemented.
+- The Prisma schema still uses the local SQLite validation path; production migrations and deployment configuration remain future work.
+
+### Decisions Made
+
+- Keep ingestion read-only and deterministic in Stage 2 so later agents can rely on a stable context package without side effects.
+- Build ingestion on top of the Stage 1 Prisma models instead of introducing a second persistence shape.
+- Validate the final package with Zod at the boundary to catch malformed context before downstream extraction or scoring stages consume it.
+- Treat private and unauthorized source items as excluded context rather than hard failures, while preserving exclusion counts and warnings for traceability.
+- Prefer explicit duplicate metadata when present and use a simple normalized content/timestamp fallback for deterministic duplicate suppression.
+- Preserve compact warning codes as the handoff contract for later stages and tests.
+- Do not populate `ExtractedFact`, `FieldComparison`, `HygieneScore`, `Recommendation`, `ApprovalAction`, `AuditEvent`, or `FeedbackEvent` in Stage 2.
+
+### Next Recommended Stage
+
+Stage 3 — Hygiene Extraction and Rules
+
+The next stage should consume `DealContextPackage` output and add the first extraction/rules layer without implementing recommendation writeback. Recommended Stage 3 outcomes:
+
+- Define extractor inputs/outputs for source-derived facts, evidence spans, confidence, and target CRM fields.
+- Implement deterministic extraction logic for the Stage 1 edge cases, such as decision maker, next step, close date, stage, forecast, procurement, legal, security, and stale-activity signals.
+- Persist or return `ExtractedFact` and `FieldComparison` records only after the extraction contract is finalized.
+- Add tests that prove extraction and comparison consume only authorized, non-duplicate source items from Stage 2 ingestion.
+- Continue to defer scoring, recommendation generation, approval workflows, and CRM writeback until later stages.
+
+### Context for the Next Codex Session
+
+- Start by reading `docs/stages/stage-03-hygiene-rules.md`, `docs/04-agent-contracts.md`, `docs/03-data-model.md`, `lib/agents/ingestion/index.ts`, `lib/agents/ingestion/schemas.ts`, `lib/agents/ingestion/types.ts`, and `tests/unit/stage2-ingestion.test.ts`.
+- Treat `DealContextPackage` as the Stage 2 output contract for downstream extraction work.
+- Preserve Stage 1 fixture IDs, `BASE_NOW = 2026-05-30T12:00:00.000Z`, and deterministic sorting unless every dependent test is intentionally updated.
+- Use `ingestDealContext` for database-backed ingestion and `buildDealContextPackage` for unit tests that do not need Prisma I/O.
+- Keep private and unauthorized source items out of extraction inputs; assertions should use the Stage 2 metadata counts and warnings when validating this behavior.
+- Extraction, scoring, recommendations, approvals, audit-event generation, feedback loops, review UI, and writeback are still not implemented. The next session should not imply these capabilities exist until their stages add them.
+- Re-run `npm run prisma:validate` and `npm test` after changing schema, seed, ingestion, extraction, or rules code.
 
 ## Stage 1 — Data Model and Seed Fixture Data
 
