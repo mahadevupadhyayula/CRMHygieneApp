@@ -2,9 +2,97 @@
 
 ## Current Stage Completed
 
-Stage 2 — Ingestion Agent
+Stage 3 — Deal-to-Source Matching Agent
 
-Stage 2 is complete because the ingestion agent now loads a CRM opportunity graph, converts it into a validated `DealContextPackage`, filters unauthorized evidence, suppresses duplicate source items, emits deterministic warnings, and is covered by Stage 2 unit tests plus the existing Stage 1 fixture/integration suite.
+Stage 3 is complete because the repository now has a deterministic deal-to-source matching agent that validates matching inputs, scores eligible source items against candidate opportunities, returns matched/ambiguous/unmatched `SourceMatch` outcomes with explainable reasons, excludes private or unauthorized sources, and is covered by focused unit tests plus scenario tests for ambiguous and edge-case source attachment.
+
+## Stage 3 — Deal-to-Source Matching Agent
+
+### Summary of Implementation
+
+Stage 3 adds a pure matching boundary that maps authorized loose source items to candidate CRM opportunities so downstream extraction can evaluate evidence in the right deal context. The matching agent:
+
+- Exposes `matchSourceToOpportunity(sourceItem, opportunities, options)` for one source item and `matchSourcesToOpportunities(sourceItems, opportunities, options)` for batch use.
+- Validates source items, opportunities, metadata, options, and output records with Zod schemas before returning typed results.
+- Produces a `SourceMatch` with `matched`, `ambiguous`, or `unmatched` status, a nullable `opportunityId`, rounded confidence, and human-readable reasons explaining the strongest signals.
+- Scores direct CRM links, exact opportunity names, account names, contact email/domain signals, contact name mentions, owner/team metadata, timestamp proximity, and configured keyword references.
+- Applies deterministic sorting and tie handling so repeated runs return stable results for the same inputs.
+- Returns `ambiguous` instead of auto-attaching when active opportunities have close confidence scores.
+- Returns `unmatched` when no candidate crosses the minimum confidence threshold, no candidates are provided, or the source is private or explicitly unauthorized.
+- Penalizes stale unrelated sources so old content does not attach solely because it contains weak account or keyword text.
+- Keeps matching scoped to attachment decisions only; fact extraction, hygiene scoring, recommendations, approval workflow, persistence, and CRM writeback are still out of scope.
+
+### Files Changed
+
+- `lib/agents/matching/index.ts` — Stage 3 matching implementation, scoring rules, source eligibility checks, ambiguity handling, confidence rounding, batch matching, and public exports.
+- `lib/agents/matching/schemas.ts` — Zod schemas for matching contacts, opportunities, source metadata, source items, match statuses, match results, and configurable matching options.
+- `lib/agents/matching/types.ts` — TypeScript types inferred from the Stage 3 matching schemas.
+- `tests/unit/stage3-matching.test.ts` — focused unit coverage for individual matching signals, schema validation, source eligibility, threshold behavior, ambiguity handling, batching, and stale-source penalties.
+- `tests/integration/stage3-matching-scenarios.test.ts` — scenario coverage for realistic matching categories and edge cases across direct, account, opportunity, contact, ambiguous, private, unmatched, misspelled, subsidiary, and similar-company situations.
+- `docs/04-agent-contracts.md` — documented the Stage 3 deal-to-source matching contract and safety constraints.
+- `docs/stages/stage-03-matching.md` — documented the Stage 3 goal, inputs, outputs, signals, invariants, and out-of-scope boundaries.
+- `docs/05-test-strategy.md` — added the Stage 3 matching test categories.
+- `docs/07-stage-handoff.md` — updated this handoff for the completed Stage 3 matching agent.
+
+### Tests Added
+
+- Added unit tests for direct CRM relationship matching.
+- Added unit tests for account-name, exact opportunity-name, contact email/domain, contact name, owner/team, timestamp proximity, and keyword scoring signals.
+- Added unit tests for schema validation and batch matching output.
+- Added unit tests that private and unauthorized sources remain unmatched.
+- Added unit tests for no-candidate, below-threshold, stale-source, and active-opportunity ambiguity behavior.
+- Added integration/scenario tests for direct match, account-name match, opportunity-name match, contact email/domain match, ambiguous account match, multiple open opportunities, unmatched source, private source, misspelled account name, and similar company/subsidiary edge cases.
+
+### Test Commands Run and Results
+
+- `npm run prisma:validate` — passed. Prisma loaded `.env`, read `prisma/schema.prisma`, and reported the schema is valid. npm also printed a non-blocking warning about the unknown `http-proxy` env config.
+- `npm test` — passed. The `pretest` hook generated Prisma Client successfully, then Vitest ran 6 test files and 52 tests successfully:
+  - `tests/unit/stage3-matching.test.ts` — 11 passed.
+  - `tests/integration/stage3-matching-scenarios.test.ts` — 12 passed.
+  - `tests/unit/stage2-ingestion.test.ts` — 15 passed.
+  - `tests/integration/stage1-seed.test.ts` — 9 passed.
+  - `tests/unit/stage1-fixtures.test.ts` — 4 passed.
+  - `tests/unit/smoke.test.ts` — 1 passed.
+
+### Known Limitations
+
+- Stage 3 is an in-memory pure matcher; it does not persist source attachments, create review queue records, or mutate CRM/source records.
+- Candidate opportunity retrieval is not implemented yet; callers must provide the bounded opportunity set to score.
+- Matching currently uses deterministic string, metadata, timestamp, and keyword signals; it does not perform semantic embedding search, LLM adjudication, fuzzy edit-distance matching, or cross-system entity resolution beyond the implemented normalization helpers.
+- Source eligibility is defensively checked from source visibility and authorization metadata, but there is still no OAuth, tenant policy, row-level permission, or user-specific entitlement layer.
+- Ambiguous and unmatched results are returned as data only; no UI workflow exists yet for manual resolution, dismissal, or attachment.
+- The matcher does not extract field facts, compare CRM field values, generate hygiene scores, recommend CRM changes, request approvals, audit decisions, or write back to CRM systems.
+
+### Decisions Made
+
+- Keep Stage 3 as a pure TypeScript module so tests can exercise deterministic matching behavior without database setup or network dependencies.
+- Use Zod at the matching boundary to keep source, opportunity, options, and result contracts explicit and reusable by later orchestration code.
+- Favor transparent weighted rules and reason strings over opaque model output for the first matching implementation.
+- Treat private and unauthorized sources as ineligible inside the matcher even though Stage 2 should already filter them.
+- Return `ambiguous` for close active candidates instead of choosing a winner, preserving human review for duplicate accounts and multiple open opportunities.
+- Keep unmatched sources reviewable and out of extraction rather than discarding them.
+- Require stronger corroborating signals when account names are misspelled or similar company/subsidiary names could be confused.
+
+### Next Recommended Stage
+
+Stage 4 — Evidence Extraction and Field Comparison
+
+The next stage should consume Stage 2 authorized context and Stage 3 `SourceMatch` results to extract bounded evidence for specific CRM fields, compare the extracted evidence with current CRM values, and emit reviewable differences without scoring hygiene or writing back. Recommended Stage 4 outcomes:
+
+- Define an extraction/comparison contract that accepts a matched source set, target CRM fields, and deterministic extraction options.
+- Implement field-specific extractors for the first bounded set of CRM hygiene fields, such as decision maker, next step, close date, amount/procurement blocker, legal/security status, and forecast/stage signals.
+- Return structured evidence snippets, source references, confidence, and conflict/insufficient-evidence statuses.
+- Preserve Stage 3 ambiguity semantics by excluding ambiguous and unmatched sources from automatic extraction unless a test or caller explicitly opts into review mode.
+- Add unit and integration tests for supported fields, missing evidence, conflicting evidence, stale evidence, source provenance, private-source exclusion, and deterministic ordering.
+
+### Context for the Next Codex Session
+
+- Start by reading `docs/stages/stage-03-matching.md`, `docs/04-agent-contracts.md`, `docs/05-test-strategy.md`, `lib/agents/ingestion/index.ts`, `lib/agents/matching/index.ts`, `lib/agents/matching/schemas.ts`, `tests/unit/stage3-matching.test.ts`, and `tests/integration/stage3-matching-scenarios.test.ts`.
+- Treat `SourceMatch.status === "matched"` as the only automatic source eligibility for extraction; ambiguous and unmatched results should remain in review paths unless the next stage explicitly defines review-mode behavior.
+- Preserve source eligibility checks for `SourceVisibility.PRIVATE`, `metadata.authorized === false`, and `metadata.authorization.authorized === false` at every downstream boundary.
+- Keep Stage 4 bounded to evidence extraction and CRM-field comparison; do not implement hygiene scoring, recommendations, approvals, audit persistence, or CRM writeback unless the stage plan is expanded.
+- Maintain deterministic fixtures and stable reason/status expectations so future tests can compare exact outputs.
+- Re-run `npm run prisma:validate` and `npm test` after changing schema, seed, ingestion, matching, extraction, or rules code.
 
 ## Stage 2 — Ingestion Agent
 
