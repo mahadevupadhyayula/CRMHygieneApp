@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "prisma:validate": "prisma validate"
+    "prisma:validate": "prisma validate",
+    "prisma:seed": "prisma db push && PRISMA_SEED_RUNNER=true vite-node prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.0",
