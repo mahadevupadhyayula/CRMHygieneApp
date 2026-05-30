@@ -43,6 +43,21 @@ Stage 4 entity resolution tests cover deterministic mention detection and normal
 
 Stage 4 test files include focused unit coverage for extraction helpers and edge cases plus fixture-backed integration coverage against the deterministic Stage 1 opportunity fixtures.
 
+## Stage 5 Coverage
+
+Stage 5 structured extraction tests cover schema-validated extraction of grounded deal facts from matched source context through the provider abstraction. The tests keep extraction separate from CRM validation, field comparison, hygiene scoring, recommendations, approvals, audit persistence, and writeback. Extraction coverage includes:
+
+- MBP field extraction: the MBP extraction scope covers next step, next-step owner, next-step due date, decision-maker, approver, champion, risk, risk severity, timeline signal, close-date risk, stage signal, forecast signal, procurement status, legal status, security status, and internal owner needed.
+- Mock model provider behavior: `MockModelProvider` deterministically parses fixture text and `StructuredExtractionAgent` validates provider results through the shared extraction schemas, avoiding live model calls in tests.
+- Golden fixture regression tests: fixture-backed expected JSON projections guard clean, vague, approval, procurement, legal, security, budget, timeline, status, and no-fact scenarios against accidental extraction drift.
+- Evidence enforcement: tests assert no facts are emitted without textual evidence and every accepted fact carries non-empty `evidenceText`.
+- Source metadata preservation: tests assert source identifiers, timestamps, match status, and suggested CRM field mappings survive extraction on every emitted fact.
+- Low-confidence extraction: vague evidence such as “Follow up soon” becomes a low-confidence fact and is not recommendation-eligible by default.
+- Unsupported inference handling: unsupported or speculative statements do not produce facts when no explicit source evidence supports the inferred CRM field.
+- Conflicting source notes: distinct source notes and conflicting status snippets are preserved as separate facts instead of overwriting or deleting earlier evidence.
+
+Stage 5 test files include focused unit coverage for targeted fact patterns, golden regression fixtures, edge cases, provider contract validation, source eligibility metadata, evidence requirements, and deterministic MBP field mappings.
+
 ## Future Coverage
 
 - Unit tests for schemas, scoring rules, and pure agent utilities.

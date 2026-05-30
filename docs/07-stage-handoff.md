@@ -2,9 +2,99 @@
 
 ## Current Stage Completed
 
-Stage 4 — Entity Resolution Agent
+Stage 5 — Structured Extraction Agent
 
-Stage 4 is complete because the repository now has a deterministic entity resolution agent that converts authorized source item text into schema-validated `ResolvedEntity` records for accounts, opportunities, contacts, role-only stakeholders, internal owners, competitors, product/module references, documents, dates, amounts, discounts, and risk keywords. It preserves source provenance and evidence text for every resolved mention, flags ambiguous pronouns and unanchored relative dates as low-confidence entities, and is covered by focused unit tests plus fixture-backed integration tests.
+Stage 5 is complete because the repository now has a structured extraction boundary that turns matched source item text into schema-validated `ExtractedFact` records through an injectable provider interface. The implementation includes deterministic mock-model extraction for MBP deal intelligence fields, evidence snippets, source metadata preservation, confidence bands, CRM field mappings, low-confidence handling, and recommendation eligibility guards for low-confidence, ambiguous, or unmatched source evidence.
+
+## Stage 5 — Structured Extraction Agent
+
+### Summary of Implementation
+
+Stage 5 adds a pure structured-extraction layer that prepares grounded deal facts for later validation and CRM comparison without scoring hygiene, recommending actions, creating approvals, persisting audit events, or writing back to CRM. The structured extraction agent:
+
+- Exposes `StructuredExtractionAgent` as the validation wrapper around any `AIModelProvider` implementation.
+- Defines `AIModelProvider.extractDealFacts(context)` as the provider abstraction for production model-backed extraction and deterministic test fakes.
+- Adds `MockModelProvider` to parse fixture text deterministically without live model calls.
+- Validates extraction contexts, source items, contacts, opportunities, extracted fact types, confidence bands, match statuses, CRM field mappings, and extracted fact lists with Zod schemas.
+- Extracts the MBP deal-intelligence field set: next step, next-step owner, next-step due date, decision-maker, approver, champion, risk, risk severity, timeline signal, close-date risk, stage signal, forecast signal, procurement status, legal status, security status, and internal owner needed.
+- Requires every emitted fact to carry evidence text, source ID, source timestamp, confidence, confidence band, source match status, and a suggested CRM field mapping.
+- Preserves source metadata by copying the source identifier, timestamp, and match status onto each fact.
+- Marks low-confidence facts as not recommendation-eligible by default.
+- Marks facts from ambiguous or unmatched source items as not recommendation-eligible by default while preserving them for review.
+- Avoids unsupported inference by emitting no facts for vague or speculative text without explicit evidence.
+- Preserves conflicting or successive notes as separate source-grounded facts instead of overwriting older evidence.
+
+### Files Changed
+
+- `lib/agents/extraction/index.ts` — Stage 5 public exports for the provider wrapper, mock provider, schemas, and types.
+- `lib/agents/extraction/provider.ts` — `AIModelProvider` interface and `StructuredExtractionAgent` validation wrapper.
+- `lib/agents/extraction/mock-provider.ts` — deterministic mock extraction provider, MBP field parsing, evidence snippets, source metadata preservation, confidence banding, recommendation eligibility, and deduplication.
+- `lib/agents/extraction/schemas.ts` — Zod schemas for extracted fact types, confidence bands, source match statuses, CRM field mappings, extraction source/context records, and extracted facts.
+- `lib/agents/extraction/types.ts` — TypeScript types inferred from the Stage 5 extraction schemas.
+- `tests/unit/stage5-extraction.test.ts` — targeted extraction, golden fixture, edge-case, evidence, source metadata, low-confidence, unsupported inference, ambiguous-source, and provider wrapper coverage.
+- `docs/stages/stage-05-extraction.md` — documented the Stage 5 goal, inputs, output, provider abstraction, extracted fields, invariants, and out-of-scope boundaries.
+- `docs/05-test-strategy.md` — added the Stage 5 structured extraction coverage categories.
+- `docs/07-stage-handoff.md` — updated this handoff for the completed Stage 5 structured extraction agent.
+
+### Tests Added
+
+- Added targeted unit tests for MBP field extraction, including next step, due date, decision-maker, risk, stage signal, forecast signal, legal status, security status, procurement status, owner, approver, champion, timeline, close-date risk, risk severity, and internal owner needed.
+- Added golden fixture regression tests that compare projected extracted facts against deterministic expected JSON for clean, vague, approval, procurement, legal, security, budget, timeline, status, and no-fact scenarios.
+- Added evidence enforcement tests to verify unsupported source text does not emit facts and accepted facts include evidence.
+- Added source metadata preservation tests for source ID, source timestamp, match status, and CRM field mappings.
+- Added low-confidence extraction tests that preserve vague next-step evidence while disabling recommendation eligibility.
+- Added unsupported inference tests to ensure speculative commit or owner assumptions do not create facts.
+- Added conflicting-source and repeated-note tests to ensure separate evidence survives instead of being overwritten.
+- Added provider wrapper tests to ensure returned provider facts are schema-validated.
+
+### Test Commands Run and Results
+
+- `npm run prisma:validate` — passed.
+- `npm test` — passed.
+
+### Known Limitations
+
+- The production `AIModelProvider` is an interface only; no hosted model SDK, prompt, retry logic, token budgeting, telemetry, or network-backed provider exists yet.
+- `MockModelProvider` is deterministic and pattern-based; it is suitable for tests but does not represent final model quality or full natural-language understanding.
+- Extraction currently emits in-memory `ExtractedFact` objects only and does not persist facts to Prisma.
+- Stage 5 does not compare extracted values with CRM snapshots, calculate hygiene scores, create recommendations, create approvals, emit audit events, or write back to CRM.
+- Source authorization enforcement depends on upstream matching and context construction; Stage 5 preserves `matchStatus` but does not yet filter private or unauthorized records itself.
+- Resolved Stage 4 entities are accepted by the broad context contract only as passthrough data; the mock extractor does not yet use resolved-entity references to improve extraction or attribution.
+- Conflict handling preserves separate facts from separate evidence but does not classify conflicts or choose a winning fact.
+
+### Decisions Made
+
+- Keep the extraction service provider-agnostic so production model integration can be added without changing the caller-facing contract.
+- Use a deterministic mock provider for repeatable unit and golden fixture tests, with no live model calls.
+- Validate both inputs and provider outputs with Zod so malformed model responses fail at the Stage 5 boundary.
+- Require evidence, source ID, source timestamp, confidence, confidence band, match status, and suggested CRM field mapping on every emitted fact.
+- Use confidence-band rules to prevent low-confidence extracted facts from becoming recommendation-eligible by default.
+- Preserve ambiguous and unmatched source facts for review while preventing them from being recommendation-eligible by default.
+- Avoid unsupported inference: only explicit evidence patterns produce facts in the deterministic provider.
+- Preserve conflicting notes as separate facts so the future validation/comparison stage can reason over conflicts instead of losing source history.
+
+### Next Recommended Stage
+
+Stage 6 — Validation and CRM Field Comparison
+
+The next stage should consume Stage 5 `ExtractedFact` records, current CRM snapshots, and relevant source metadata to compare extracted evidence with existing CRM values and produce reviewable validation/comparison results without hygiene scoring, recommendations, approvals, audit persistence, or CRM writeback. Recommended Stage 6 outcomes:
+
+- Define field-comparison schemas for exact matches, missing CRM values, stale CRM values, conflicts, unsupported evidence, and insufficient evidence.
+- Compare extracted facts against current CRM snapshots for the MBP field set while preserving source provenance and confidence.
+- Classify conflicting source notes without picking a winner unless deterministic tie-breaking rules are explicitly defined.
+- Keep low-confidence, ambiguous-source, and unmatched-source facts reviewable but not automatically actionable.
+- Add unit and fixture-backed tests for matching values, mismatches, stale evidence, missing CRM fields, conflicting facts, source metadata preservation, and deterministic ordering.
+
+### Context for the Next Codex Session
+
+- Start by reading `docs/stages/stage-05-extraction.md`, `docs/04-agent-contracts.md`, `docs/05-test-strategy.md`, `lib/agents/extraction/schemas.ts`, `lib/agents/extraction/provider.ts`, `lib/agents/extraction/mock-provider.ts`, and `tests/unit/stage5-extraction.test.ts`.
+- Treat `StructuredExtractionAgent` as the Stage 5 validation boundary and `AIModelProvider` as the only allowed abstraction for future production model calls.
+- Preserve the current rule that low-confidence facts and facts from ambiguous or unmatched source items are not recommendation-eligible by default.
+- Do not infer facts without evidence; unsupported inference should remain a no-fact or review-only path.
+- Use the suggested CRM field mappings as hints for comparison, but validate comparisons against current CRM snapshot data instead of trusting extracted facts alone.
+- Preserve source IDs, timestamps, match status, evidence text, confidence, and CRM field mappings in every downstream validation result.
+- Keep Stage 6 bounded to validation and field comparison; do not implement hygiene scoring, recommendations, approvals, audit persistence, or CRM writeback unless the stage plan is explicitly expanded.
+- Re-run `npm run prisma:validate` and `npm test` after changing schema, seed, ingestion, matching, entity resolution, extraction, validation, or rules code.
 
 ## Stage 4 — Entity Resolution Agent
 
