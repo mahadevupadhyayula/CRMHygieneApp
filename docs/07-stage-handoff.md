@@ -560,3 +560,21 @@ Stage 0 initialized the CRM Hygiene Agent repository as a Next.js + TypeScript a
 - Stage 1 — Data Model and Seed Fixture Data
 
 Focus only on Prisma models, deterministic seed fixture data, and related unit/integration tests before adding CRM adapter work or agent recommendation logic.
+
+## Stage 7 — CRM Field Comparison Engine Handoff
+
+Implemented `lib/agents/comparison` as the deterministic comparison layer between Stage 6 validation and future recommendation/scoring work.
+
+### Delivered
+
+- Added schema-validated `FieldComparison` output with `crmField`, `currentValue`, `extractedValue`, `issueType`, `severity`, `evidence`, and `recommendationEligible`.
+- Added comparison issue support for empty fields, stale fields, contradictions, timeline mismatches, missing tasks, hidden risks, stage mismatches, forecast mismatches, missing stakeholders, and missing owners.
+- Added safeguards to ignore rejected facts, ambiguous/unmatched source matches, and stale-source validation results.
+- Added newest-fact-wins resolution so newer validated notes can override older notes for the same CRM target field.
+- Added unit and fixture-backed integration coverage for Stage 7 scenarios.
+
+### Next Stage Notes
+
+- Persistence remains out of scope for Stage 7. Future stages can map the pure output into the Prisma `FieldComparison` table.
+- Recommendation generation should honor `recommendationEligible`; low-confidence or review-only comparisons should not be auto-applied.
+- The comparison heuristics are deterministic and intentionally conservative. Add new fact types or CRM field mappings in `lib/agents/comparison/index.ts` before broadening recommendation behavior.
