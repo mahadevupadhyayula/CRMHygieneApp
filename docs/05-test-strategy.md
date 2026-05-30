@@ -58,6 +58,21 @@ Stage 5 structured extraction tests cover schema-validated extraction of grounde
 
 Stage 5 test files include focused unit coverage for targeted fact patterns, golden regression fixtures, edge cases, provider contract validation, source eligibility metadata, evidence requirements, and deterministic MBP field mappings.
 
+## Stage 6 Coverage
+
+Stage 6 validation tests cover schema-validated review decisions for extracted facts before they can influence CRM recommendations. The tests keep validation separate from CRM field comparison, hygiene scoring, recommendation generation, approvals, audit persistence, and writeback. Validation coverage includes:
+
+- Evidence enforcement: facts without evidence are rejected.
+- Authorization enforcement: private or unauthorized source facts are rejected even at high confidence.
+- Timestamp and freshness checks: missing source timestamps are rejected and stale source evidence requires review.
+- Confidence thresholds: low-confidence facts require review and remain out of automatic recommendation flow.
+- Completeness checks: role-only stakeholders and ambiguous dates require review.
+- Contradiction detection: conflicting facts from emails, manager notes, and rep notes are preserved and marked reviewable.
+- Fact-vs-inference separation: inference-only facts require review or rejection when direct evidence is absent.
+- Action-risk classification: low-, medium-, and high-risk fact types are assigned deterministic risk levels.
+
+Stage 6 test files include focused unit coverage for all requested validation checks plus fixture-backed tests that pass Stage 5 deterministic extraction output into the validator.
+
 ## Future Coverage
 
 - Unit tests for schemas, scoring rules, and pure agent utilities.

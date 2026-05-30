@@ -1950,3 +1950,84 @@ type StructuredExtractionRunError = {
   ]
 }
 ```
+
+## Stage 6 — Validation Agent
+
+The Stage 6 Validation Agent validates extracted facts before any downstream CRM recommendation path can use them. It is deterministic, schema-validated, and evidence-first. It does not compare against CRM fields, calculate scores, generate recommendations, approve changes, persist audit events, or write back to CRM.
+
+### Input Schema
+
+```ts
+type ValidationContext = {
+  facts: ValidationFact[];
+  sources?: ValidationSource[];
+  options?: {
+    referenceDate?: Date | string;
+    maxFactAgeDays?: number;
+    minimumConfidence?: number;
+    strictRecommendationEligibility?: boolean;
+  };
+};
+```
+
+A `ValidationFact` accepts Stage 5 extracted fact fields plus optional `factId`, `metadata`, and `isInference` flags. A `ValidationSource` carries source `id`, `visibility`, `occurredAt`, and authorization metadata. Source metadata may include `{ authorization: { authorized: boolean, scope: string } }`.
+
+### Output Schema
+
+```ts
+type ValidationResult = {
+  factId: string;
+  status: "valid" | "needs_review" | "rejected";
+  reasons: string[];
+  confidence: number;
+  actionRisk: "low" | "medium" | "high";
+  evidenceStatus:
+    | "present"
+    | "missing"
+    | "unauthorized"
+    | "missing_timestamp"
+    | "stale"
+    | "contradictory"
+    | "inference_only";
+};
+```
+
+### Invariants
+
+- Facts without evidence are rejected.
+- Private or unauthorized source evidence is rejected even if model confidence is high.
+- Missing source timestamps are rejected because freshness and contradiction checks cannot be trusted.
+- Stale, low-confidence, ambiguous-date, role-only stakeholder, non-recommendation-eligible, and inference-only facts require review.
+- Contradictory facts are preserved and marked `needs_review`; the validator does not silently choose a winner.
+- Action risk is deterministic: next-step style updates are low risk, stakeholder/risk/process-status facts are medium risk, and forecast/stage/close-date facts are high risk.
+
+### Error and Review States
+
+| Condition | Result |
+| --- | --- |
+| Missing evidence text | `rejected` with `evidenceStatus: "missing"` |
+| Unauthorized or private source | `rejected` with `evidenceStatus: "unauthorized"` |
+| Missing source timestamp | `rejected` with `evidenceStatus: "missing_timestamp"` |
+| Stale source evidence | `needs_review` with `evidenceStatus: "stale"` |
+| Conflicting values for the same fact type | `needs_review` with `evidenceStatus: "contradictory"` |
+| Inference-only fact | `needs_review` or `rejected` if no evidence exists |
+
+### Example
+
+```ts
+validateFacts({
+  facts: [{
+    factId: "legal-pending",
+    factType: "legal_status",
+    rawValue: "pending",
+    normalizedValue: "pending",
+    evidenceText: "Legal is pending.",
+    sourceId: "src-email-1",
+    sourceTimestamp: new Date("2026-05-29T10:00:00.000Z"),
+    confidence: 0.82,
+    recommendationEligible: true,
+    sourceMatchStatus: "matched"
+  }],
+  sources: [{ id: "src-email-1", visibility: "TEAM", metadata: { authorization: { authorized: true, scope: "team" } } }]
+});
+```

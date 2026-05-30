@@ -2,6 +2,89 @@
 
 ## Current Stage Completed
 
+Stage 6 — Validation Agent
+
+Stage 6 is complete because the repository now has a deterministic Validation Agent that accepts Stage 5 extracted facts and source metadata, validates evidence and authorization safety, assigns review/rejection statuses, classifies action risk, detects contradictions, and preserves structured reasons for downstream CRM comparison and recommendation gates.
+
+## Stage 6 — Validation Agent
+
+### Summary of Implementation
+
+Stage 6 adds a pure validation boundary that decides whether extracted facts are safe to use before any CRM recommendation path. The validation agent:
+
+- Exposes `validateFacts(context)` and `ValidationAgent.validateFacts(context)` for deterministic validation.
+- Validates inputs and outputs with Zod schemas.
+- Rejects facts without evidence text.
+- Rejects facts from private or unauthorized sources even when confidence is high.
+- Rejects facts with missing source timestamps.
+- Flags stale evidence as `needs_review` using a configurable reference date and freshness window.
+- Flags confidence below the configured threshold as `needs_review`.
+- Preserves low-confidence or extraction-ineligible facts for review instead of treating them as valid.
+- Detects contradictory fact values for CRM-impacting fact types and marks all conflicting evidence as reviewable.
+- Flags role-only stakeholders and ambiguous dates as incomplete enough to require review.
+- Separates inference-only facts from directly evidenced facts.
+- Assigns deterministic action risk: low for next-step style facts, medium for stakeholder/risk/process-status facts, and high for forecast/stage/close-date facts.
+- Does not implement CRM field comparison, hygiene scoring, recommendations, approvals, audit persistence, or writeback.
+
+### Files Changed
+
+- `lib/agents/validation/index.ts` — Stage 6 Validation Agent implementation, validation checks, contradiction detection, action-risk mapping, and public exports.
+- `lib/agents/validation/schemas.ts` — Zod schemas for validation contexts, source metadata, facts, options, result statuses, evidence statuses, and validation results.
+- `lib/agents/validation/types.ts` — TypeScript types inferred from validation schemas.
+- `tests/unit/stage6-validation.test.ts` — unit tests for all requested validation checks and edge cases.
+- `tests/integration/stage6-validation-fixtures.test.ts` — fixture-backed tests that pass Stage 5 deterministic extraction output through Stage 6 validation.
+- `docs/stages/stage-06-validation.md` — documented the Stage 6 goal, inputs, output, checks, invariants, and test expectations.
+- `docs/04-agent-contracts.md` — documented the Stage 6 Validation Agent contract and examples.
+- `docs/05-test-strategy.md` — added the Stage 6 validation coverage categories.
+- `docs/08-decision-log.md` — recorded the Stage 6 design decision to keep validation deterministic and evidence-first.
+- `docs/07-stage-handoff.md` — updated this handoff for the completed Stage 6 Validation Agent.
+
+### Tests Added
+
+- Added Stage 6 unit tests for valid high-confidence evidence, missing evidence rejection, unauthorized/private source rejection, stale source review, role-only stakeholder incompleteness, ambiguous dates, contradiction detection, inference separation, and action-risk assignment.
+- Added Stage 6 edge-case tests for old evidence contradicted by newer evidence, two valid conflicting facts, email-source contradiction, manager-note contradiction, missing source timestamp, low-confidence high-severity facts, high-confidence unauthorized facts, and inference without direct evidence.
+- Added fixture-backed integration tests covering Stage 5 extraction output flowing into Stage 6 validation for valid evidence, vague low-confidence evidence, unauthorized source evidence, and conflicting legal status evidence.
+
+### Test Commands Run and Results
+
+- `npm test -- --run tests/unit/stage6-validation.test.ts` — passed.
+- `npm test -- --run tests/unit/stage6-validation.test.ts tests/integration/stage6-validation-fixtures.test.ts` — passed.
+- `npm run prisma:validate` — passed.
+- `npm test` — passed; Vitest ran 11 files and 136 tests successfully.
+- `npx tsc --noEmit` — passed.
+
+### Known Limitations
+
+- Validation results are returned in memory and are not yet persisted to Prisma.
+- Contradiction detection is deterministic and field-type based; it does not yet perform semantic resolution, source trust ranking, or newest-wins tie-breaking.
+- Source authorization relies on source metadata supplied by upstream ingestion/matching stages.
+- Action-risk policy is fixed in code for Stage 6 and is not yet admin-configurable.
+- Stage 6 does not compare facts with CRM snapshots, score hygiene, create recommendations, approve actions, write audit records, or write back to CRM.
+
+### Decisions Made
+
+- Keep validation as a pure deterministic service so tests can exercise every safety gate without live models or CRM side effects.
+- Reject evidence-free, unauthorized, and timestamp-missing facts because they cannot safely influence recommendations.
+- Mark stale, low-confidence, incomplete, ambiguous, contradictory, and inference-only facts as `needs_review` when evidence exists so humans can review without losing provenance.
+- Preserve all contradictory facts rather than silently choosing a winner.
+
+### Next Recommended Stage
+
+Stage 7 — CRM Field Comparison Engine
+
+The next stage should compare `valid` and appropriate `needs_review` facts against current CRM field snapshots to create field-comparison records for empty, stale, conflicting, missing, hidden-risk, stage, forecast, stakeholder, and owner issues. It should not generate recommendations, approvals, hygiene scores, or writebacks yet.
+
+### Context for the Next Codex Session
+
+- Start by reading `docs/stages/stage-06-validation.md`, `docs/04-agent-contracts.md`, `lib/agents/validation/index.ts`, and the Stage 6 tests.
+- Treat `status: "rejected"` as non-actionable for all downstream stages.
+- Treat `status: "needs_review"` as reviewable but not automatically recommendation-eligible unless Stage 7 explicitly defines a policy for a specific issue type.
+- Preserve `factId`, `reasons`, `actionRisk`, and `evidenceStatus` when building CRM comparisons.
+- Re-run `npm run prisma:validate` and `npm test` after changing schema, extraction, validation, or comparison code.
+
+
+## Current Stage Completed
+
 Stage 5 — Structured Extraction Agent
 
 Stage 5 is complete because the repository now has a structured extraction boundary that turns matched source item text into schema-validated `ExtractedFact` records through an injectable provider interface. The implementation includes deterministic mock-model extraction for MBP deal intelligence fields, evidence snippets, source metadata preservation, confidence bands, CRM field mappings, low-confidence handling, and recommendation eligibility guards for low-confidence, ambiguous, or unmatched source evidence.
