@@ -54,7 +54,7 @@ const END_OF_MONTH_PATTERN = /\b(?:end of month|EOM|month end)\b/gi;
 const SOON_PATTERN = /\bsoon\b/gi;
 const NEXT_WEEKDAY_PATTERN = /\bnext\s+(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)\b/gi;
 const COMPETITOR_NAME_PATTERN = /\b(?:competitor|competing with|versus|vs\.?|lost to|evaluating)\s+([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){0,3})/g;
-const PRODUCT_MODULE_PATTERN = /\b([A-Z][A-Za-z0-9+.-]*(?:\s+[A-Z][A-Za-z0-9+.-]*){0,3})\s+(?:product|module|SKU|package|add-on|addon)\b/g;
+const PRODUCT_MODULE_PATTERN = /\b([A-Z][A-Za-z0-9+.-]*(?:\s+[A-Z][A-Za-z0-9+.-]*){0,3})\s+(?:product|module|SKU|package|add-on|addon|connector)\b/g;
 
 export function resolveEntities(contextInput: z.input<typeof entityResolutionContextSchema>, optionsInput: z.input<typeof entityResolutionOptionsSchema> = {}): ResolvedEntity[] {
   const context = entityResolutionContextSchema.parse(contextInput);
@@ -173,7 +173,7 @@ function extractAmounts(entities: ResolvedEntity[], text: string, sourceItem: En
 function extractCompetitors(entities: ResolvedEntity[], text: string, sourceItem: EntityResolutionSourceItem): void {
   for (const match of text.matchAll(COMPETITOR_NAME_PATTERN)) {
     const competitorName = normalizeCompetitorName(match[1]);
-    if (competitorName && !/review|discount|pricing|procurement|security/i.test(competitorName)) {
+    if (competitorName && !/review|discount|pricing|procurement|security|connector/i.test(competitorName)) {
       addEntity(entities, sourceItem, text, match.index ?? 0, match[0], "competitor", competitorName, 0.7);
     }
   }
