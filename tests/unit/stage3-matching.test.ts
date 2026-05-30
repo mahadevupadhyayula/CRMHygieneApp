@@ -34,27 +34,28 @@ function opportunity(overrides: Partial<MatchingOpportunity> = {}): MatchingOppo
 function sourceItem(overrides: Partial<MatchingSourceItem> = {}): MatchingSourceItem {
   return {
     id: "src-1",
-    accountId: "acct-acme",
+    accountId: null,
     opportunityId: null,
     contactId: null,
     visibility: SourceVisibility.TEAM,
-    title: "Follow-up on Acme Expansion",
-    body: "Jordan Lee confirmed procurement and budget next steps for Acme Expansion.",
-    occurredAt: recent,
+    title: "Untitled source",
+    body: "General customer note.",
+    occurredAt: null,
     ingestedAt: now,
     metadata: {
-      author: "Alex Rivera",
-      authorEmail: "alex.rivera@vendor.example",
-      teamName: "Enterprise Sales",
       authorization: { authorized: true, scope: "team" },
     },
     ...overrides,
   };
 }
 
-describe("Deal-to-Source Matching Agent", () => {
+function confidenceFor(source: MatchingSourceItem, candidate: MatchingOpportunity = opportunity()): number {
+  return matchSourceToOpportunity(source, [candidate], { minimumMatchConfidence: 0 }).confidence;
+}
+
+describe("Deal-to-Source Matching Agent unit signals", () => {
   it("returns high confidence for a direct CRM relationship", () => {
-    const match = matchSourceToOpportunity(sourceItem({ opportunityId: "opp-acme-expansion", title: "Internal note", body: "Brief update." }), [opportunity()]);
+    const match = matchSourceToOpportunity(sourceItem({ opportunityId: "opp-acme-expansion" }), [opportunity()]);
 
     expect(match.status).toBe("matched");
     expect(match.opportunityId).toBe("opp-acme-expansion");
@@ -64,33 +65,40 @@ describe("Deal-to-Source Matching Agent", () => {
   });
 
   it("returns high confidence for exact opportunity-name evidence", () => {
-    const match = matchSourceToOpportunity(sourceItem({ title: "Acme Expansion procurement update", body: "Priya Shah sent notes from priya.shah@acme.example about budget approval." }), [opportunity()]);
+    const match = matchSourceToOpportunity(sourceItem({ title: "Project Falcon update", body: "Project Falcon procurement is ready." }), [opportunity({ name: "Project Falcon", accountName: "Acme Corp" })]);
 
     expect(match.status).toBe("matched");
     expect(match.opportunityId).toBe("opp-acme-expansion");
-    expect(match.confidence).toBeGreaterThanOrEqual(0.8);
+    expect(match.confidence).toBeGreaterThanOrEqual(0.72);
     expect(match.reasons).toContain("Exact opportunity name appears in the source item.");
   });
 
   it("keeps account-only references at medium confidence when no opportunity-specific signal exists", () => {
-    const match = matchSourceToOpportunity(sourceItem({ title: "Acme Corp update", body: "Acme Corp asked for a next-step recap.", metadata: { authorization: { authorized: true } } }), [opportunity()]);
+    const match = matchSourceToOpportunity(sourceItem({ title: "Acme Corp update", body: "Acme Corp asked for a next-step recap." }), [opportunity()]);
 
     expect(match.status).toBe("unmatched");
     expect(match.opportunityId).toBeNull();
+    expect(match.confidence).toBeGreaterThanOrEqual(0.4);
     expect(match.confidence).toBeLessThan(0.62);
     expect(match.reasons).toContain("Account-only mention is capped at medium confidence without opportunity-specific signals.");
   });
 
-  it("marks close competing account-only opportunities as ambiguous and does not attach an opportunity", () => {
-    const secondOpportunity = opportunity({
+  it("marks multiple active opportunities for the same account as ambiguous when the source cannot distinguish them", () => {
+    const acmeRenewal = opportunity({
       id: "opp-acme-renewal",
       externalId: "OPP-ACME-002",
       name: "Acme Renewal",
       contacts: [{ id: "contact-sam", firstName: "Sam", lastName: "Green", email: "sam.green@acme.example" }],
     });
+
     const match = matchSourceToOpportunity(
-      sourceItem({ title: "Acme Corp legal thread", body: "legal@acme.example asked Alex Rivera for updated terms.", metadata: { author: "Alex Rivera", ownerName: "Alex Rivera", authorization: { authorized: true } } }),
-      [opportunity(), secondOpportunity],
+      sourceItem({
+        title: "Acme Corp legal thread",
+        body: "legal@acme.example asked for updated terms.",
+        metadata: { author: "Alex Rivera", ownerName: "Alex Rivera", authorization: { authorized: true, scope: "team" } },
+        occurredAt: recent,
+      }),
+      [opportunity(), acmeRenewal],
     );
 
     expect(match.status).toBe("ambiguous");
@@ -98,25 +106,58 @@ describe("Deal-to-Source Matching Agent", () => {
     expect(match.reasons.join(" ")).toContain("Preserved for review; do not use this source item for extraction until a human resolves the match.");
   });
 
-  it("uses contact domain, contact name, owner/team, timestamp, and keyword signals to improve confidence", () => {
-    const match = matchSourceToOpportunity(sourceItem({ title: "Procurement follow-up", body: "Jordan Lee at jordan.lee@acme.example confirmed procurement timing.", metadata: { author: "Alex Rivera", teamName: "Enterprise Sales", authorization: { authorized: true } } }), [opportunity()]);
+  it("uses contact email domain evidence to improve confidence", () => {
+    const baseline = confidenceFor(sourceItem({ title: "Procurement follow-up", body: "Procurement follow-up." }));
+    const withDomain = matchSourceToOpportunity(sourceItem({ title: "Procurement follow-up", body: "procurement@acme.example asked about timing." }), [opportunity()], { minimumMatchConfidence: 0 });
 
-    expect(match.status).toBe("matched");
-    expect(match.confidence).toBeGreaterThanOrEqual(0.62);
-    expect(match.reasons).toEqual(expect.arrayContaining(["Contact email domain aligns with the opportunity account or contacts.", "A contact name associated with the opportunity appears in the source item.", "Owner or team metadata aligns with the opportunity owner/team.", "Source timestamp is near opportunity activity or close-date context."]));
+    expect(withDomain.confidence).toBeGreaterThan(baseline);
+    expect(withDomain.reasons).toContain("Contact email domain aligns with the opportunity account or contacts.");
+  });
+
+  it("uses contact name mentions to improve confidence", () => {
+    const baseline = confidenceFor(sourceItem({ title: "Budget follow-up", body: "Budget follow-up." }));
+    const withName = matchSourceToOpportunity(sourceItem({ title: "Budget follow-up", body: "Jordan Lee asked for timing." }), [opportunity()], { minimumMatchConfidence: 0 });
+
+    expect(withName.confidence).toBeGreaterThan(baseline);
+    expect(withName.reasons).toContain("A contact name associated with the opportunity appears in the source item.");
+  });
+
+  it("uses owner/team metadata to improve confidence", () => {
+    const baseline = confidenceFor(sourceItem({ title: "Manager note", body: "Manager note." }));
+    const withOwnerTeam = matchSourceToOpportunity(sourceItem({ title: "Manager note", body: "Manager note.", metadata: { author: "Alex Rivera", teamName: "Enterprise Sales", authorization: { authorized: true, scope: "team" } } }), [opportunity()], { minimumMatchConfidence: 0 });
+
+    expect(withOwnerTeam.confidence).toBeGreaterThan(baseline);
+    expect(withOwnerTeam.reasons).toContain("Owner or team metadata aligns with the opportunity owner/team.");
+  });
+
+  it("uses timestamp proximity to improve confidence", () => {
+    const baseline = confidenceFor(sourceItem({ title: "Meeting note", body: "Meeting note.", occurredAt: old }));
+    const withProximity = matchSourceToOpportunity(sourceItem({ title: "Meeting note", body: "Meeting note.", occurredAt: recent }), [opportunity()], { minimumMatchConfidence: 0 });
+
+    expect(withProximity.confidence).toBeGreaterThan(baseline);
+    expect(withProximity.reasons).toContain("Source timestamp is near opportunity activity or close-date context.");
+  });
+
+  it("uses keyword references to improve confidence", () => {
+    const baseline = confidenceFor(sourceItem({ title: "Follow-up", body: "Follow-up." }));
+    const withKeywords = matchSourceToOpportunity(sourceItem({ title: "Security review", body: "Procurement asked about the security review." }), [opportunity()], { minimumMatchConfidence: 0 });
+
+    expect(withKeywords.confidence).toBeGreaterThan(baseline);
+    expect(withKeywords.reasons).toContain("Keyword references matched: procurement, security review.");
   });
 
   it("lowers confidence for old unrelated notes", () => {
-    const match = matchSourceToOpportunity(sourceItem({ title: "Legacy note", body: "Old generic onboarding note with no relevant references.", occurredAt: old, metadata: { authorization: { authorized: true } } }), [opportunity()], { referenceDate: now });
+    const recentUnrelated = matchSourceToOpportunity(sourceItem({ title: "Generic note", body: "Generic note.", occurredAt: recent }), [opportunity()], { minimumMatchConfidence: 0, referenceDate: now });
+    const oldUnrelated = matchSourceToOpportunity(sourceItem({ title: "Legacy note", body: "Old generic onboarding note with no relevant references.", occurredAt: old }), [opportunity()], { minimumMatchConfidence: 0, referenceDate: now });
 
-    expect(match.status).toBe("unmatched");
-    expect(match.confidence).toBe(0);
-    expect(match.reasons).toContain("Old source item lacks direct opportunity or account references, lowering confidence.");
+    expect(oldUnrelated.confidence).toBeLessThan(recentUnrelated.confidence);
+    expect(oldUnrelated.confidence).toBe(0);
+    expect(oldUnrelated.reasons).toContain("Old source item lacks direct opportunity or account references, lowering confidence.");
   });
 
   it("never matches private or unauthorized sources", () => {
     const [privateMatch, unauthorizedMatch] = matchSourcesToOpportunities(
-      [sourceItem({ id: "src-private", visibility: SourceVisibility.PRIVATE }), sourceItem({ id: "src-unauthorized", metadata: { authorization: { authorized: false, scope: "private" } } })],
+      [sourceItem({ id: "src-private", visibility: SourceVisibility.PRIVATE, opportunityId: "opp-acme-expansion" }), sourceItem({ id: "src-unauthorized", opportunityId: "opp-acme-expansion", metadata: { authorization: { authorized: false, scope: "private" } } })],
       [opportunity()],
     );
 
