@@ -3,7 +3,11 @@ import { execFileSync } from "node:child_process";
 import { PrismaClient, SourceVisibility } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { ingestDealContext } from "../../lib/agents/ingestion";
+import { dealContextPackageSchema } from "../../lib/agents/ingestion/schemas";
 import { fixtures, seedCrmFixtures } from "../../prisma/seed";
+
+process.env.DATABASE_URL = "file:./test.db";
 
 const prisma = new PrismaClient();
 
@@ -123,4 +127,86 @@ describe("Stage 1 deterministic seed integration", () => {
     await expect(prisma.opportunityContact.count({ where: { opportunityId: "OPP-001-HEALTHY" } })).resolves.toBe(2);
     await expect(prisma.opportunityContact.count({ where: { opportunityId: "OPP-016-PRIVATE-SOURCE-NO-CONTACTS" } })).resolves.toBe(0);
   });
+
+  it("ingests every seeded opportunity into schema-valid deal context packages", async () => {
+    const opportunities = await prisma.opportunity.findMany({
+      orderBy: { externalId: "asc" },
+      select: { id: true, externalId: true },
+    });
+
+    expect(opportunities).toHaveLength(expectedOpportunityCount);
+
+    for (const opportunity of opportunities) {
+      const context = await ingestDealContext(prisma, opportunity.id);
+      expect(dealContextPackageSchema.safeParse(context).success, opportunity.externalId ?? opportunity.id).toBe(true);
+      expect(context.metadata.opportunityId).toBe(opportunity.id);
+    }
+  });
+
+  it("never returns private or unauthorized seeded sources during ingestion", async () => {
+    const opportunities = await prisma.opportunity.findMany({
+      orderBy: { externalId: "asc" },
+      select: { id: true, externalId: true },
+    });
+
+    for (const opportunity of opportunities) {
+      const context = await ingestDealContext(prisma, opportunity.id);
+
+      for (const source of context.sourceItems) {
+        expect(source.visibility, `${opportunity.externalId}:${source.id}`).not.toBe(SourceVisibility.PRIVATE);
+        expect(source.metadata.authorized, `${opportunity.externalId}:${source.id}`).not.toBe(false);
+        expect(source.metadata.authorization?.authorized, `${opportunity.externalId}:${source.id}`).not.toBe(false);
+      }
+    }
+  });
+
+  it("deduplicates seeded duplicate notes during ingestion", async () => {
+    const context = await ingestDealContext(prisma, "OPP-014-DUPLICATE-NOTES");
+
+    expect(context.sourceItems.map((source) => source.id)).toEqual(["SRC-014-A"]);
+    expect(context.metadata.duplicateSourceItemCount).toBe(1);
+    expect(context.warnings.map((warning) => warning.code)).toContain("DUPLICATE_SOURCE_SUPPRESSED");
+  });
+
+  it("preserves source metadata for returned ingestion sources", async () => {
+    const opportunities = await prisma.opportunity.findMany({
+      orderBy: { externalId: "asc" },
+      select: { id: true, externalId: true },
+    });
+
+    for (const opportunity of opportunities) {
+      const context = await ingestDealContext(prisma, opportunity.id);
+
+      for (const source of context.sourceItems) {
+        const seeded = await prisma.sourceItem.findUniqueOrThrow({
+          where: { id: source.id },
+          select: { type: true, visibility: true, occurredAt: true, ingestedAt: true, metadataJson: true },
+        });
+        const metadata = parseMetadata(seeded.metadataJson);
+
+        expect(source).toMatchObject({
+          type: seeded.type,
+          visibility: seeded.visibility,
+          occurredAt: seeded.occurredAt,
+          ingestedAt: seeded.ingestedAt,
+          metadata,
+        });
+      }
+    }
+  });
+
+  it("does not create extraction, scoring, comparison, recommendation, or approval records during ingestion", async () => {
+    const opportunities = await prisma.opportunity.findMany({ select: { id: true } });
+
+    for (const opportunity of opportunities) {
+      await ingestDealContext(prisma, opportunity.id);
+    }
+
+    await expect(prisma.extractedFact.count()).resolves.toBe(0);
+    await expect(prisma.fieldComparison.count()).resolves.toBe(0);
+    await expect(prisma.hygieneScore.count()).resolves.toBe(0);
+    await expect(prisma.recommendation.count()).resolves.toBe(0);
+    await expect(prisma.approvalAction.count()).resolves.toBe(0);
+  });
+
 });
