@@ -560,3 +560,568 @@ The matching agent inherits Stage 2 safety constraints and must defensively re-c
   "evidence": []
 }
 ```
+
+## Stage 4 — Entity Resolution Agent
+
+The Stage 4 Entity Resolution Agent converts mentions in authorized deal context into typed `ResolvedEntity` records. It resolves contacts, role-only stakeholders, internal owners, documents, dates, discounts, accounts, and opportunities against CRM records and source evidence. It must not create CRM records, enrich from unauthorized sources, or treat an inferred entity as confirmed without sufficient evidence.
+
+### Input Schema
+
+```ts
+type EntityResolutionAgentInput = {
+  /** Correlation ID for tracing one entity-resolution run across logs and UI review. */
+  runId: string;
+
+  /** Package returned by the Stage 2 Ingestion Agent after privacy, authorization, and deduplication filters. */
+  dealContext: DealContextPackage;
+
+  /** Mentions to resolve from authorized source text or deterministic upstream extraction. */
+  mentions: EntityMention[];
+
+  /** Optional resolution controls. Defaults must be deterministic and documented by the implementation. */
+  options?: {
+    minimumResolvedConfidence?: number; // Defaults to 0.75.
+    ambiguityDelta?: number; // Defaults to 0.10 between top candidate scores.
+    maxEvidenceItemsPerEntity?: number; // Defaults to 3.
+    referenceDate?: string; // ISO-8601 date used for relative-date normalization; defaults to run date.
+    timezone?: string; // IANA timezone for date interpretation; defaults to opportunity/account timezone, then UTC.
+    includeCandidates?: boolean; // Defaults to true for ambiguous entities and false otherwise.
+  };
+};
+
+type EntityMention = {
+  /** Stable identifier used to join the mention to the ResolvedEntity output. */
+  mentionId: string;
+
+  /** Source item that contains the mention. Must reference an included DealContextPackage.sourceItems record. */
+  sourceItemId: string;
+
+  /** Exact authorized text span or deterministic upstream mention text. */
+  text: string;
+
+  /** Optional character offsets within the source item body/title when available. */
+  span?: {
+    start: number;
+    end: number;
+  };
+
+  /** Upstream expected type, if known. */
+  expectedEntityType?: EntityType;
+
+  /** Optional deal-scoped hints that constrain resolution. */
+  resolutionHints?: {
+    opportunityId?: string;
+    accountId?: string;
+    contactIds?: string[];
+    ownerUserIds?: string[];
+    acceptedRoleLabels?: string[];
+    documentTypes?: DocumentEntityType[];
+    currencyCode?: string;
+  };
+};
+```
+
+Required input fields:
+
+- `runId`: stable trace identifier for this resolution attempt.
+- `dealContext`: a valid `DealContextPackage` that has already excluded private, unauthorized, and duplicate source items.
+- `mentions`: one or more mention spans to resolve. Empty arrays should return an empty `resolvedEntities` array plus a `NO_ENTITY_MENTIONS` warning.
+
+Optional input fields:
+
+- `options.minimumResolvedConfidence`: threshold at or above which an entity may be returned as `RESOLVED` when no ambiguity rule is triggered.
+- `options.ambiguityDelta`: maximum score gap between top candidates that requires an `AMBIGUOUS` result.
+- `options.maxEvidenceItemsPerEntity`: cap on returned evidence references for deterministic UI display.
+- `options.referenceDate`: anchor date for phrases such as `next Friday`, `tomorrow`, or `end of quarter`.
+- `options.timezone`: timezone used to interpret relative and date-only mentions.
+- `options.includeCandidates`: controls whether non-winning candidate summaries are included.
+
+### Output Schema for `ResolvedEntity`
+
+```ts
+type EntityResolutionAgentOutput = {
+  runId: string;
+  opportunityId: string;
+  resolvedEntities: ResolvedEntity[];
+  warnings: EntityResolutionWarning[];
+};
+
+type ResolvedEntity = {
+  mentionId: string;
+  sourceItemId: string;
+  originalText: string;
+  entityType: EntityType;
+  status: "RESOLVED" | "AMBIGUOUS" | "UNRESOLVED" | "ERROR";
+  confidence: number; // Inclusive range: 0.0 to 1.0.
+  confidenceBand: "high" | "medium" | "low" | "none";
+  normalizedValue: EntityNormalizedValue | null;
+  displayName: string | null;
+  resolvedRecordId?: string;
+  resolvedExternalId?: string;
+  reasonCodes: EntityResolutionReasonCode[];
+  rationale: string;
+  evidence: EntityEvidenceReference[];
+  candidates?: EntityResolutionCandidate[];
+  error?: EntityResolutionError;
+};
+
+type EntityNormalizedValue =
+  | { type: "contact"; contactId: string; name: string; email?: string; role?: string }
+  | { type: "role"; roleLabel: string; accountId?: string; opportunityId?: string }
+  | { type: "internal_owner"; userId: string; name: string; team?: string }
+  | { type: "document"; documentId?: string; title: string; documentType?: DocumentEntityType; url?: string }
+  | { type: "date"; date: string; precision: "day" | "week" | "month" | "quarter"; timezone: string; referenceDate: string }
+  | { type: "discount"; value: number; unit: "percent" | "currency"; currencyCode?: string; basis?: "list_price" | "annual_contract_value" | "total_contract_value" | "unknown" }
+  | { type: "account"; accountId: string; name: string }
+  | { type: "opportunity"; opportunityId: string; name: string };
+
+type EntityEvidenceReference = {
+  sourceItemId: string;
+  sourceType: SourceType;
+  title?: string;
+  occurredAt?: string; // ISO-8601 timestamp or date.
+  matchedText: string;
+  author?: string;
+  sourceSystem?: string;
+  externalId?: string;
+};
+
+type EntityResolutionCandidate = {
+  entityType: EntityType;
+  displayName: string;
+  normalizedValue: EntityNormalizedValue | null;
+  resolvedRecordId?: string;
+  score: number;
+  reasonCodes: EntityResolutionReasonCode[];
+};
+
+type EntityResolutionReasonCode =
+  | "EXACT_NAME_MATCH"
+  | "NORMALIZED_NAME_MATCH"
+  | "EMAIL_MATCH"
+  | "CRM_ROLE_MATCH"
+  | "ROLE_ONLY_MENTION"
+  | "INTERNAL_OWNER_MATCH"
+  | "DOCUMENT_TITLE_MATCH"
+  | "DOCUMENT_TYPE_MATCH"
+  | "RELATIVE_DATE_NORMALIZED"
+  | "EXPLICIT_DATE_NORMALIZED"
+  | "DISCOUNT_PERCENT_NORMALIZED"
+  | "DISCOUNT_CURRENCY_NORMALIZED"
+  | "ACCOUNT_SCOPE_MATCH"
+  | "OPPORTUNITY_SCOPE_MATCH"
+  | "MULTIPLE_SUPPORTING_SOURCES"
+  | "CONFLICTING_ENTITY_CANDIDATES"
+  | "TOP_CANDIDATES_WITHIN_AMBIGUITY_DELTA"
+  | "INSUFFICIENT_EVIDENCE"
+  | "NO_AUTHORIZED_EVIDENCE_FOUND"
+  | "PRIVATE_SOURCE_EXCLUDED"
+  | "UNAUTHORIZED_SOURCE_EXCLUDED"
+  | "INVALID_ENTITY_MENTION";
+
+type EntityResolutionWarning = {
+  code:
+    | "NO_ENTITY_MENTIONS"
+    | "PRIVATE_SOURCE_EXCLUDED"
+    | "UNAUTHORIZED_SOURCE_EXCLUDED"
+    | "INSUFFICIENT_SOURCE_METADATA"
+    | "RELATIVE_DATE_WITHOUT_REFERENCE_DATE"
+    | "CANDIDATES_OMITTED";
+  severity: "info" | "warning" | "error";
+  message: string;
+  affectedRecordIds?: string[];
+};
+
+type EntityResolutionError = {
+  code:
+    | "INVALID_DEAL_CONTEXT"
+    | "INVALID_ENTITY_MENTION"
+    | "UNSUPPORTED_ENTITY_TYPE"
+    | "NO_AUTHORIZED_EVIDENCE_AVAILABLE"
+    | "DATE_NORMALIZATION_FAILED"
+    | "RESOLUTION_TIMEOUT";
+  message: string;
+  retryable: boolean;
+};
+```
+
+`ResolvedEntity.evidence` must reference only source items included in `DealContextPackage.sourceItems`. Evidence must not include raw snippets, metadata, IDs, or derived facts from private or unauthorized records except aggregate warning IDs when the caller is authorized to see those IDs.
+
+### Entity Type Enum and Confidence Semantics
+
+```ts
+type EntityType =
+  | "CONTACT"
+  | "ROLE_ONLY_STAKEHOLDER"
+  | "INTERNAL_OWNER"
+  | "DOCUMENT_REFERENCE"
+  | "DATE"
+  | "DISCOUNT"
+  | "ACCOUNT"
+  | "OPPORTUNITY";
+
+type DocumentEntityType =
+  | "ORDER_FORM"
+  | "MSA"
+  | "SOW"
+  | "SECURITY_REVIEW"
+  | "LEGAL_REDLINES"
+  | "PRICING_PROPOSAL"
+  | "OTHER";
+```
+
+Confidence is the agent's bounded assessment that the returned normalized entity is the best deal-scoped resolution for the mention. It is not a claim that the real-world fact is objectively true.
+
+| Confidence band | Numeric range | Typical status | Semantics |
+| --- | --- | --- | --- |
+| `high` | `0.85` to `1.00` | `RESOLVED` | Direct CRM identifier, exact email/name match, explicit date, or unique document/title match with authoritative scoped evidence. |
+| `medium` | `0.60` to `0.84` | `RESOLVED` or `AMBIGUOUS` | Evidence is relevant but depends on role labels, aliases, relative-date normalization, partial document titles, or a close competing candidate. |
+| `low` | `0.01` to `0.59` | `AMBIGUOUS` or `UNRESOLVED` | Evidence is weak, stale, incomplete, only role-like, or below `minimumResolvedConfidence`. |
+| `none` | `0.00` | `UNRESOLVED` or `ERROR` | No authorized evidence can be used, or validation/normalization failed before resolution. |
+
+### Evidence Requirements
+
+The Entity Resolution Agent must meet these evidence requirements:
+
+- Every `RESOLVED` or `AMBIGUOUS` entity must include at least one `EntityEvidenceReference` from an authorized, non-private `sourceItemId` in the provided `DealContextPackage`.
+- Evidence must include the exact `matchedText` span used for resolution and preserve source type, title, timestamp, source system, author, and external ID when available.
+- Named contacts should be supported by CRM contact identity evidence such as exact name, normalized name, email address, linked contact ID, or a source mention tied to an included contact.
+- Role-only stakeholders must remain `ROLE_ONLY_STAKEHOLDER` unless there is sufficient authorized evidence to identify a specific contact.
+- Internal owners must resolve only to internal user/owner records present in CRM context or explicit owner metadata; external contacts must not be coerced into owners.
+- Document references must include either a document title, a stable document ID/link, or a document type plus source context that scopes the document to the opportunity.
+- Date and discount entities must preserve the original text and the deterministic normalization basis in `normalizedValue`.
+- Excluded private or unauthorized source content must not be used for candidate generation, scoring, rationale, or hidden intermediate reasoning.
+
+### Date Normalization Rules
+
+Date normalization must be deterministic and reviewable:
+
+- Normalize explicit dates to ISO-8601 `YYYY-MM-DD` in `normalizedValue.date`.
+- Interpret date-only mentions in `options.timezone`, then opportunity/account timezone, then UTC.
+- Interpret relative phrases against `options.referenceDate` when provided; otherwise use the run date and emit `RELATIVE_DATE_WITHOUT_REFERENCE_DATE` with `severity: "warning"`.
+- Preserve the anchor in `normalizedValue.referenceDate` and the applied timezone in `normalizedValue.timezone`.
+- Use `precision: "day"` for exact days, `"week"` for week-level phrases such as `next week`, `"month"` for month-level phrases, and `"quarter"` for quarter-level phrases.
+- Resolve `tomorrow`, `yesterday`, and weekday names to the nearest future or specified relative date according to documented implementation rules; examples and tests must pin `referenceDate` to avoid clock-dependent fixtures.
+- Return `DATE_NORMALIZATION_FAILED` when a date phrase is malformed, locale-dependent without a locale, or conflicts with the provided timezone/reference date.
+
+### Ambiguity Rules
+
+The agent must return `status: "AMBIGUOUS"` instead of `RESOLVED` when any of these conditions hold:
+
+- Two or more authorized candidates of the same entity type have scores at or above the medium band and materially different normalized values.
+- The top two candidate scores are within `options.ambiguityDelta`, even if the highest score exceeds `minimumResolvedConfidence`.
+- A mention could validly represent different entity types, such as `security review` as either a document reference or an activity, and the expected type does not disambiguate it.
+- A role-only stakeholder mention matches multiple contacts with the same role and no evidence uniquely identifies one person.
+- A document reference contains only a generic document type and multiple in-scope documents of that type exist.
+- A relative date can map to multiple dates because the reference date, timezone, locale, or business-calendar rule is missing or contradictory.
+- A discount mention lacks enough basis to distinguish percent versus currency, list-price basis versus contract-value basis, or proposed versus approved discount.
+
+Ambiguous outputs should include `candidates` when `options.includeCandidates` is true or when downstream UI review needs candidate choices. The `rationale` must explain the ambiguity class without exposing private or unauthorized content.
+
+### Error States
+
+| Error code | Condition | Expected behavior |
+| --- | --- | --- |
+| `INVALID_DEAL_CONTEXT` | The supplied `DealContextPackage` fails schema validation or lacks required opportunity/source metadata. | Return a blocking output-level error or entity-level `ERROR` records for all affected mentions; do not score candidates. |
+| `INVALID_ENTITY_MENTION` | A mention lacks `mentionId`, `sourceItemId`, text, or valid span offsets, or references a source item absent from the package. | Return `status: "ERROR"` for that mention and continue processing valid mentions. |
+| `UNSUPPORTED_ENTITY_TYPE` | The requested `expectedEntityType` or normalized value type is not implemented. | Return `status: "ERROR"` for that mention with `retryable: false`. |
+| `NO_AUTHORIZED_EVIDENCE_AVAILABLE` | No source items remain after privacy, authorization, and metadata eligibility checks. | Return `UNRESOLVED` for affected mentions unless the caller requires evidence availability as a blocking precondition. |
+| `DATE_NORMALIZATION_FAILED` | A date mention cannot be normalized deterministically. | Return `status: "ERROR"` for the date mention with a rationale that names the missing or contradictory normalization input. |
+| `RESOLUTION_TIMEOUT` | Candidate extraction, date normalization, or scoring exceeds the configured deterministic timeout. | Return `status: "ERROR"` for incomplete mentions with `retryable: true`; preserve completed entities. |
+
+### Example Input
+
+```json
+{
+  "runId": "entity-resolution-acme-001",
+  "dealContext": {
+    "opportunity": {
+      "id": "opp-acme-renewal-2026",
+      "name": "Acme Renewal 2026",
+      "stage": "PROPOSAL",
+      "forecastCategory": "COMMIT",
+      "amount": "125000",
+      "closeDate": "2026-06-30"
+    },
+    "account": {
+      "id": "acct-acme",
+      "name": "Acme Corp"
+    },
+    "contacts": [
+      {
+        "id": "contact-jane-buyer",
+        "firstName": "Jane",
+        "lastName": "Buyer",
+        "email": "jane.buyer@example.com",
+        "role": "Economic Buyer",
+        "isPrimary": true
+      }
+    ],
+    "crmFieldSnapshots": [],
+    "sourceItems": [
+      {
+        "id": "src-acme-note-entity-001",
+        "type": "NOTE",
+        "visibility": "INTERNAL",
+        "title": "Renewal stakeholder update",
+        "body": "Jane Buyer asked the economic buyer to review the order form tomorrow. Account owner Maria Lopez said procurement mentioned a 10% discount.",
+        "occurredAt": "2026-05-30T15:30:00.000Z",
+        "ingestedAt": "2026-05-30T16:00:00.000Z",
+        "metadata": {
+          "sourceSystem": "salesforce-fixture",
+          "externalId": "sf-note-entity-001",
+          "author": "Account Executive",
+          "authorizationScope": "deal-team",
+          "duplicateOf": null,
+          "linkedRecordExternalId": "006-acme-renewal"
+        }
+      }
+    ],
+    "activityHistory": [],
+    "warnings": []
+  },
+  "mentions": [
+    {
+      "mentionId": "mention-named-contact",
+      "sourceItemId": "src-acme-note-entity-001",
+      "text": "Jane Buyer",
+      "expectedEntityType": "CONTACT"
+    },
+    {
+      "mentionId": "mention-role-only",
+      "sourceItemId": "src-acme-note-entity-001",
+      "text": "economic buyer",
+      "expectedEntityType": "ROLE_ONLY_STAKEHOLDER"
+    },
+    {
+      "mentionId": "mention-internal-owner",
+      "sourceItemId": "src-acme-note-entity-001",
+      "text": "Account owner Maria Lopez",
+      "expectedEntityType": "INTERNAL_OWNER"
+    },
+    {
+      "mentionId": "mention-document-reference",
+      "sourceItemId": "src-acme-note-entity-001",
+      "text": "order form",
+      "expectedEntityType": "DOCUMENT_REFERENCE"
+    },
+    {
+      "mentionId": "mention-relative-date",
+      "sourceItemId": "src-acme-note-entity-001",
+      "text": "tomorrow",
+      "expectedEntityType": "DATE"
+    },
+    {
+      "mentionId": "mention-discount",
+      "sourceItemId": "src-acme-note-entity-001",
+      "text": "10% discount",
+      "expectedEntityType": "DISCOUNT"
+    }
+  ],
+  "options": {
+    "referenceDate": "2026-05-30",
+    "timezone": "UTC",
+    "minimumResolvedConfidence": 0.75,
+    "ambiguityDelta": 0.1,
+    "maxEvidenceItemsPerEntity": 3,
+    "includeCandidates": true
+  }
+}
+```
+
+### Example Output
+
+```json
+{
+  "runId": "entity-resolution-acme-001",
+  "opportunityId": "opp-acme-renewal-2026",
+  "resolvedEntities": [
+    {
+      "mentionId": "mention-named-contact",
+      "sourceItemId": "src-acme-note-entity-001",
+      "originalText": "Jane Buyer",
+      "entityType": "CONTACT",
+      "status": "RESOLVED",
+      "confidence": 0.96,
+      "confidenceBand": "high",
+      "normalizedValue": {
+        "type": "contact",
+        "contactId": "contact-jane-buyer",
+        "name": "Jane Buyer",
+        "email": "jane.buyer@example.com",
+        "role": "Economic Buyer"
+      },
+      "displayName": "Jane Buyer",
+      "resolvedRecordId": "contact-jane-buyer",
+      "reasonCodes": ["EXACT_NAME_MATCH", "ACCOUNT_SCOPE_MATCH"],
+      "rationale": "The named contact exactly matches an in-scope CRM contact on the Acme opportunity.",
+      "evidence": [
+        {
+          "sourceItemId": "src-acme-note-entity-001",
+          "sourceType": "NOTE",
+          "title": "Renewal stakeholder update",
+          "occurredAt": "2026-05-30T15:30:00.000Z",
+          "matchedText": "Jane Buyer",
+          "author": "Account Executive",
+          "sourceSystem": "salesforce-fixture",
+          "externalId": "sf-note-entity-001"
+        }
+      ]
+    },
+    {
+      "mentionId": "mention-role-only",
+      "sourceItemId": "src-acme-note-entity-001",
+      "originalText": "economic buyer",
+      "entityType": "ROLE_ONLY_STAKEHOLDER",
+      "status": "RESOLVED",
+      "confidence": 0.78,
+      "confidenceBand": "medium",
+      "normalizedValue": {
+        "type": "role",
+        "roleLabel": "Economic Buyer",
+        "accountId": "acct-acme",
+        "opportunityId": "opp-acme-renewal-2026"
+      },
+      "displayName": "Economic Buyer",
+      "reasonCodes": ["ROLE_ONLY_MENTION", "CRM_ROLE_MATCH", "OPPORTUNITY_SCOPE_MATCH"],
+      "rationale": "The mention identifies a stakeholder role but does not by itself identify a unique person, so it remains a role-only entity.",
+      "evidence": [
+        {
+          "sourceItemId": "src-acme-note-entity-001",
+          "sourceType": "NOTE",
+          "title": "Renewal stakeholder update",
+          "occurredAt": "2026-05-30T15:30:00.000Z",
+          "matchedText": "economic buyer",
+          "author": "Account Executive",
+          "sourceSystem": "salesforce-fixture",
+          "externalId": "sf-note-entity-001"
+        }
+      ]
+    },
+    {
+      "mentionId": "mention-internal-owner",
+      "sourceItemId": "src-acme-note-entity-001",
+      "originalText": "Account owner Maria Lopez",
+      "entityType": "INTERNAL_OWNER",
+      "status": "RESOLVED",
+      "confidence": 0.91,
+      "confidenceBand": "high",
+      "normalizedValue": {
+        "type": "internal_owner",
+        "userId": "user-maria-lopez",
+        "name": "Maria Lopez",
+        "team": "Enterprise Sales"
+      },
+      "displayName": "Maria Lopez",
+      "resolvedRecordId": "user-maria-lopez",
+      "reasonCodes": ["INTERNAL_OWNER_MATCH", "ACCOUNT_SCOPE_MATCH"],
+      "rationale": "The owner mention matches the in-scope internal account owner record.",
+      "evidence": [
+        {
+          "sourceItemId": "src-acme-note-entity-001",
+          "sourceType": "NOTE",
+          "title": "Renewal stakeholder update",
+          "occurredAt": "2026-05-30T15:30:00.000Z",
+          "matchedText": "Account owner Maria Lopez",
+          "author": "Account Executive",
+          "sourceSystem": "salesforce-fixture",
+          "externalId": "sf-note-entity-001"
+        }
+      ]
+    },
+    {
+      "mentionId": "mention-document-reference",
+      "sourceItemId": "src-acme-note-entity-001",
+      "originalText": "order form",
+      "entityType": "DOCUMENT_REFERENCE",
+      "status": "RESOLVED",
+      "confidence": 0.83,
+      "confidenceBand": "medium",
+      "normalizedValue": {
+        "type": "document",
+        "documentId": "doc-acme-order-form-2026",
+        "title": "Acme Renewal 2026 Order Form",
+        "documentType": "ORDER_FORM"
+      },
+      "displayName": "Acme Renewal 2026 Order Form",
+      "resolvedRecordId": "doc-acme-order-form-2026",
+      "reasonCodes": ["DOCUMENT_TYPE_MATCH", "OPPORTUNITY_SCOPE_MATCH"],
+      "rationale": "The document type mention resolves to the in-scope Acme renewal order form because only one authorized order form is linked to the opportunity.",
+      "evidence": [
+        {
+          "sourceItemId": "src-acme-note-entity-001",
+          "sourceType": "NOTE",
+          "title": "Renewal stakeholder update",
+          "occurredAt": "2026-05-30T15:30:00.000Z",
+          "matchedText": "order form",
+          "author": "Account Executive",
+          "sourceSystem": "salesforce-fixture",
+          "externalId": "sf-note-entity-001"
+        }
+      ]
+    },
+    {
+      "mentionId": "mention-relative-date",
+      "sourceItemId": "src-acme-note-entity-001",
+      "originalText": "tomorrow",
+      "entityType": "DATE",
+      "status": "RESOLVED",
+      "confidence": 0.88,
+      "confidenceBand": "high",
+      "normalizedValue": {
+        "type": "date",
+        "date": "2026-05-31",
+        "precision": "day",
+        "timezone": "UTC",
+        "referenceDate": "2026-05-30"
+      },
+      "displayName": "2026-05-31",
+      "reasonCodes": ["RELATIVE_DATE_NORMALIZED", "OPPORTUNITY_SCOPE_MATCH"],
+      "rationale": "The relative date was normalized deterministically from the pinned reference date in UTC.",
+      "evidence": [
+        {
+          "sourceItemId": "src-acme-note-entity-001",
+          "sourceType": "NOTE",
+          "title": "Renewal stakeholder update",
+          "occurredAt": "2026-05-30T15:30:00.000Z",
+          "matchedText": "tomorrow",
+          "author": "Account Executive",
+          "sourceSystem": "salesforce-fixture",
+          "externalId": "sf-note-entity-001"
+        }
+      ]
+    },
+    {
+      "mentionId": "mention-discount",
+      "sourceItemId": "src-acme-note-entity-001",
+      "originalText": "10% discount",
+      "entityType": "DISCOUNT",
+      "status": "RESOLVED",
+      "confidence": 0.81,
+      "confidenceBand": "medium",
+      "normalizedValue": {
+        "type": "discount",
+        "value": 10,
+        "unit": "percent",
+        "basis": "unknown"
+      },
+      "displayName": "10% discount",
+      "reasonCodes": ["DISCOUNT_PERCENT_NORMALIZED", "OPPORTUNITY_SCOPE_MATCH"],
+      "rationale": "The discount amount is explicit, but the pricing basis is not stated, so the normalized basis remains unknown.",
+      "evidence": [
+        {
+          "sourceItemId": "src-acme-note-entity-001",
+          "sourceType": "NOTE",
+          "title": "Renewal stakeholder update",
+          "occurredAt": "2026-05-30T15:30:00.000Z",
+          "matchedText": "10% discount",
+          "author": "Account Executive",
+          "sourceSystem": "salesforce-fixture",
+          "externalId": "sf-note-entity-001"
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}
+```
