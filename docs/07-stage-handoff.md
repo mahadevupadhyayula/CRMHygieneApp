@@ -30,3 +30,10 @@ Stage 14 — Evaluation Harness and Regression Suite.
 - Added unit coverage for response mapping, pagination, auth failures, rate limits, missing permissions, field mapping, missing fields, deleted records, duplicate records, field type mismatches, absent custom fields, partial sync failures, and read-only enforcement.
 - Added integration coverage for mock deal/note/activity sync, local CRM snapshot creation, large note volumes, no-writeback behavior, and logged sync failures.
 - Next stage should replace the mocked HubSpot client with an OAuth-backed read-scope client while keeping the normalized schema and read-only boundary unchanged.
+
+
+## Stage 16 — Approval-gated Live Writeback
+
+Stage 16 adds approval-gated live CRM writeback on top of the existing CRM adapter boundary. The implementation supports approved task creation, note summaries, risk tag/field updates, next step, decision-maker, close date, stage, and forecast category writes. Strict gates block unapproved, read-only, stale, conflicting, field-denied, and high-risk non-manager writes. Amount changes are disabled by default, and closed-won/lost transitions are explicitly out of scope.
+
+Mocked CRM API tests cover validation errors, field-level permission denials, API timeouts, retry handling, duplicate task/idempotency behavior, before/after audit logs, rollback support, writeback conflicts, and audit-export-required gating. Future real CRM implementations should preserve these adapter contracts and keep mocked API coverage ahead of live credentials.

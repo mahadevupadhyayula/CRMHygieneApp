@@ -70,7 +70,7 @@ describe("Stage 11 simulated CRM writeback unit coverage", () => {
   });
 
   it("blocks high-risk writebacks without a manager actor", () => {
-    const result = executeWriteback({ snapshot: snapshot(), recommendation: recommendation({ riskLevel: "high", crmField: "Amount", suggestedValue: "125000" }), actor: ae, options: { now } });
+    const result = executeWriteback({ snapshot: snapshot(), recommendation: recommendation({ riskLevel: "high", crmField: "Amount", currentValue: "100000", suggestedValue: "125000" }), actor: ae, options: { now } });
 
     expect(result.attempt).toEqual(expect.objectContaining({ status: "failed", errorCode: "HIGH_RISK_MANAGER_REQUIRED" }));
     expect(result.snapshot.opportunities["opp-1"].fields.Amount.value).toBe(100000);
@@ -105,7 +105,7 @@ describe("Stage 11 simulated CRM writeback unit coverage", () => {
   it("handles missing CRM fields, invalid field mappings, and value type mismatches", () => {
     const missingField = executeWriteback({ snapshot: snapshot(), recommendation: recommendation({ crmField: "Missing__c" }), actor: manager, options: { now } });
     const invalidMapping = executeWriteback({ snapshot: snapshot(), recommendation: recommendation(), actor: manager, options: { now, fieldMapping: { NextStep: "" } } });
-    const mismatch = executeWriteback({ snapshot: snapshot(), recommendation: recommendation({ crmField: "Amount", suggestedValue: "not money" }), actor: manager, options: { now } });
+    const mismatch = executeWriteback({ snapshot: snapshot(), recommendation: recommendation({ crmField: "Amount", currentValue: "100000", suggestedValue: "not money" }), actor: manager, options: { now, amountWritePolicy: "admin_only" } });
 
     expect(missingField.attempt.errorCode).toBe("CRM_FIELD_MISSING");
     expect(invalidMapping.attempt.errorCode).toBe("INVALID_FIELD_MAPPING");
@@ -130,8 +130,8 @@ describe("Stage 11 simulated CRM writeback unit coverage", () => {
   });
 
   it("rolls back high-risk updates", () => {
-    const rec = recommendation({ riskLevel: "high", crmField: "Amount", suggestedValue: "125000" });
-    const written = executeWriteback({ snapshot: snapshot(), recommendation: rec, actor: manager, options: { now } });
+    const rec = recommendation({ riskLevel: "high", crmField: "Amount", currentValue: "100000", suggestedValue: "125000" });
+    const written = executeWriteback({ snapshot: snapshot(), recommendation: rec, actor: manager, options: { now, amountWritePolicy: "admin_only" } });
     const rolledBack = rollbackWriteback({ snapshot: written.snapshot, attemptId: written.attempt.id, actor: manager, now });
 
     expect(written.snapshot.opportunities["opp-1"].fields.Amount.value).toBe(125000);
