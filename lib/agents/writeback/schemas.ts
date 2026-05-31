@@ -67,6 +67,8 @@ export const simulatedOwnerAssignmentSchema = z
 
 export const writebackActionSchema = z.enum(["update_crm_field", "create_task", "add_risk_tag", "add_note_summary", "assign_internal_owner"]);
 export const writebackAttemptStatusSchema = z.enum(["success", "failed", "duplicate", "rolled_back"]);
+export const writebackApprovalRequirementSchema = z.enum(["approval_light", "approval_required", "manager_approval", "disabled_admin_only", "out_of_scope"]);
+export const writebackApiErrorCodeSchema = z.enum(["CRM_VALIDATION_ERROR", "FIELD_PERMISSION_DENIED", "API_TIMEOUT", "API_ERROR"]);
 
 export const writebackChangeSchema = z
   .object({
@@ -95,6 +97,8 @@ export const writebackAttemptSchema = z
     createdAt: z.coerce.date(),
     rolledBackAt: z.coerce.date().optional(),
     rollbackOfAttemptId: z.string().min(1).optional(),
+    retryCount: z.number().int().nonnegative().default(0),
+    approvalRequirement: writebackApprovalRequirementSchema.optional(),
   })
   .strict();
 
@@ -119,7 +123,18 @@ export const writebackOptionsSchema = z
     fieldMapping: fieldMappingSchema.default({}),
     expectedOpportunityVersion: z.number().int().nonnegative().optional(),
     staleSourcePolicy: z.enum(["block", "allow"]).default("block"),
+    readOnlyMode: z.boolean().default(false),
+    amountWritePolicy: z.enum(["disabled", "admin_only"]).default("disabled"),
+    enforceCurrentValueMatch: z.boolean().default(true),
+    maxRetries: z.number().int().nonnegative().default(1),
+    writableFields: z.array(z.string().min(1)).default(["NextStep", "NextStepDueDate__c", "Risk__c", "DecisionMaker__c", "CloseDate", "StageName", "ForecastCategoryName"]),
+    deniedFields: z.array(z.string().min(1)).default([]),
+    validationFailureRecommendationIds: z.array(z.string().min(1)).default([]),
+    timeoutRecommendationIds: z.array(z.string().min(1)).default([]),
+    retryableFailureRecommendationIds: z.array(z.string().min(1)).default([]),
     failRecommendationIds: z.array(z.string().min(1)).default([]),
+    requireAuditExport: z.boolean().default(false),
+    auditExporterAvailable: z.boolean().default(true),
   })
   .strict();
 

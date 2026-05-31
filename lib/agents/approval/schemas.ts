@@ -79,7 +79,7 @@ export const approvalPolicyOptionsSchema = z
   .object({
     now: z.coerce.date().optional(),
     expectedVersion: z.number().int().nonnegative().optional(),
-    revOpsApprovableFields: z.array(z.string().min(1)).default(["NextStep", "NextStepDueDate__c", "Risk__c", "ProcurementStatus__c", "LegalStatus__c", "SecurityStatus__c", "OwnerName"]),
+    revOpsApprovableFields: z.array(z.string().min(1)).default(["NextStep", "NextStepDueDate__c", "Risk__c", "DecisionMaker__c", "ProcurementStatus__c", "LegalStatus__c", "SecurityStatus__c", "OwnerName"]),
     aeApprovableFields: z.array(z.string().min(1)).default(["NextStep", "NextStepDueDate__c"]),
     staleRecommendationPolicy: z.enum(["block", "allow"]).default("block"),
   })

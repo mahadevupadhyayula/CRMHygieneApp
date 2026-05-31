@@ -5,7 +5,7 @@ import {
   writebackAttemptSchema,
   writebackOptionsSchema,
 } from "./schemas";
-import type { CrmFieldDataType, CrmFieldValue, SimulatedCrmSnapshot, WritebackAttempt, WritebackChange, WritebackResult } from "./types";
+import type { CrmFieldDataType, CrmFieldValue, SimulatedCrmSnapshot, WritebackApiErrorCode, WritebackApprovalRequirement, WritebackAttempt, WritebackChange, WritebackResult } from "./types";
 import { approvalAuditEventSchema, type ApprovalActor, type ApprovalAuditEvent, type ApprovalRecommendation } from "../approval";
 
 export * from "./schemas";
@@ -13,6 +13,8 @@ export * from "./types";
 
 const SUPPORTED_ACTIONS = new Set(["update_crm_field", "create_task", "add_risk_tag", "add_note_summary", "assign_internal_owner"]);
 const FORECAST_FIELDS = new Set(["ForecastCategoryName", "StageName", "CloseDate", "Amount"]);
+const STAGE_FORECAST_FIELDS = new Set(["ForecastCategoryName", "StageName"]);
+const OUT_OF_SCOPE_TERMINAL_VALUES = new Set(["closed won", "closedwon", "closed-won", "closed lost", "closedlost", "closed-lost"]);
 
 type ParsedOptions = ReturnType<typeof writebackOptionsSchema.parse>;
 
@@ -46,14 +48,15 @@ export function executeWriteback(input: unknown): WritebackResult {
         message: `Duplicate writeback skipped for recommendation ${parsed.recommendation.id}.`,
         change: duplicate.change,
         createdAt: now,
+        retryCount: 0,
+        approvalRequirement: approvalRequirementFor(parsed.recommendation),
       });
       const auditEvent = appendAuditEvent(snapshot, parsed.recommendation, parsed.actor, "execute", "approved", "executed", now, attempt.message, { writebackAttemptId: attempt.id, duplicateOfAttemptId: duplicate.id });
       return { snapshot, attempt, auditEvent };
     }
 
-    if (options.failRecommendationIds.includes(parsed.recommendation.id)) {
-      throw new WritebackError("SIMULATED_WRITEBACK_FAILURE", `Simulated writeback failure for recommendation ${parsed.recommendation.id}.`);
-    }
+    const apiCheck = simulateAdapterPreflight(snapshot, parsed.recommendation, options);
+    if (!apiCheck.success) throw new WritebackError(apiCheck.code, apiCheck.message);
 
     const change = applyAction(snapshot, parsed.recommendation, options, now);
     const attempt = appendAttempt(snapshot, {
@@ -65,11 +68,13 @@ export function executeWriteback(input: unknown): WritebackResult {
       actorRole: parsed.actor.role,
       actionType: parsed.recommendation.actionType as WritebackAttempt["actionType"],
       status: "success",
-      message: `Simulated ${parsed.recommendation.actionType} writeback succeeded for recommendation ${parsed.recommendation.id}.`,
+      message: `Live ${parsed.recommendation.actionType} writeback succeeded for recommendation ${parsed.recommendation.id}.`,
       change,
       createdAt: now,
+      retryCount: apiCheck.retryCount,
+      approvalRequirement: approvalRequirementFor(parsed.recommendation),
     });
-    const auditEvent = appendAuditEvent(snapshot, parsed.recommendation, parsed.actor, "execute", "approved", "executed", now, attempt.message, { writebackAttemptId: attempt.id, change });
+    const auditEvent = appendAuditEvent(snapshot, parsed.recommendation, parsed.actor, "execute", "approved", "executed", now, attempt.message, { writebackAttemptId: attempt.id, approvalRequirement: attempt.approvalRequirement, beforeValue: change.beforeValue, afterValue: change.afterValue, change });
     return { snapshot, attempt, auditEvent };
   } catch (error) {
     const writebackError = normalizeError(error);
@@ -86,10 +91,18 @@ export function executeWriteback(input: unknown): WritebackResult {
       errorCode: writebackError.code,
       errorMessage: writebackError.message,
       createdAt: now,
+      retryCount: attemptedRetryCount(parsed.recommendation, options),
+      approvalRequirement: approvalRequirementFor(parsed.recommendation),
     });
     const auditEvent = appendAuditEvent(snapshot, parsed.recommendation, parsed.actor, "fail", parsed.recommendation.status, "failed", now, writebackError.message, { writebackAttemptId: attempt.id, errorCode: writebackError.code });
     return { snapshot, attempt, auditEvent };
   }
+}
+
+
+export function exportWritebackAuditEvents(snapshotInput: SimulatedCrmSnapshot): ApprovalAuditEvent[] {
+  const snapshot = cloneSnapshot(snapshotInput);
+  return snapshot.auditEvents.map((event) => approvalAuditEventSchema.parse(event));
 }
 
 export function rollbackWriteback(input: unknown): WritebackResult {
@@ -123,6 +136,8 @@ export function rollbackWriteback(input: unknown): WritebackResult {
     createdAt: now,
     rolledBackAt: now,
     rollbackOfAttemptId: original.id,
+    retryCount: 0,
+    approvalRequirement: original.approvalRequirement,
   });
   const auditEvent = approvalAuditEventSchema.parse({
     id: `audit-${attempt.id}`,
@@ -143,17 +158,25 @@ export function rollbackWriteback(input: unknown): WritebackResult {
 }
 
 function assertWritable(recommendation: ApprovalRecommendation, actor: ApprovalActor, options: ParsedOptions, now: Date): void {
-  if (recommendation.status !== "approved") throw new WritebackError("RECOMMENDATION_NOT_APPROVED", "Only approved recommendations may be written to the simulated CRM.");
+  if (options.readOnlyMode) throw new WritebackError("READ_ONLY_WRITE_FORBIDDEN", "Read-only mode blocks all CRM writebacks.");
+  if (options.requireAuditExport && !options.auditExporterAvailable) throw new WritebackError("AUDIT_EXPORT_REQUIRED", "Audit export must be available before live writeback.");
+  if (recommendation.status !== "approved") throw new WritebackError("RECOMMENDATION_NOT_APPROVED", "Only approved recommendations may be written to the CRM.");
   if (recommendation.deletedAt) throw new WritebackError("RECOMMENDATION_DELETED", "Deleted recommendations cannot be written back.");
   if (recommendation.staleAt && recommendation.staleAt <= now && options.staleSourcePolicy === "block") throw new WritebackError("SOURCE_STALE", "Writeback is blocked because the source recommendation is stale.");
-  if (!SUPPORTED_ACTIONS.has(recommendation.actionType)) throw new WritebackError("UNSUPPORTED_ACTION", `Action ${recommendation.actionType} is not supported by simulated writeback.`);
-  if (recommendation.riskLevel === "high" && actor.role !== "manager") throw new WritebackError("HIGH_RISK_MANAGER_REQUIRED", "High-risk writebacks require a manager actor.");
-  if (FORECAST_FIELDS.has(recommendation.crmField ?? "") && actor.role === "ae") throw new WritebackError("FORECAST_PERMISSION_DENIED", "AEs cannot write forecast-changing recommendations.");
+  if (!SUPPORTED_ACTIONS.has(recommendation.actionType)) throw new WritebackError("UNSUPPORTED_ACTION", `Action ${recommendation.actionType} is not supported by live writeback.`);
+
+  const requirement = approvalRequirementFor(recommendation);
+  if (requirement === "out_of_scope") throw new WritebackError("CLOSED_WON_LOST_OUT_OF_SCOPE", "Closed-won/lost transitions are out of scope for live writeback.");
+  if (recommendation.riskLevel === "high" && actor.role !== "manager") throw new WritebackError("HIGH_RISK_MANAGER_REQUIRED", "High-risk writebacks require manager approval and manager execution.");
+  if (recommendation.crmField === "Amount" && options.amountWritePolicy === "disabled") throw new WritebackError("AMOUNT_WRITEBACK_DISABLED", "Amount changes are disabled unless a future admin-only path is explicitly configured.");
+  if (recommendation.crmField === "Amount" && options.amountWritePolicy === "admin_only" && actor.role !== "manager") throw new WritebackError("AMOUNT_WRITEBACK_ADMIN_ONLY", "Amount changes require a strict admin-only executor.");
+  if (requirement === "manager_approval" && actor.role !== "manager") throw new WritebackError("HIGH_RISK_MANAGER_REQUIRED", "High-risk writebacks require manager approval and manager execution.");
+  if (STAGE_FORECAST_FIELDS.has(recommendation.crmField ?? "") && actor.role === "ae") throw new WritebackError("FORECAST_PERMISSION_DENIED", "AEs cannot write stage or forecast recommendations.");
 }
 
 function applyAction(snapshot: SimulatedCrmSnapshot, recommendation: ApprovalRecommendation, options: ParsedOptions, now: Date): WritebackChange {
   const opportunity = snapshot.opportunities[recommendation.opportunityId];
-  if (!opportunity) throw new WritebackError("OPPORTUNITY_NOT_FOUND", `Opportunity ${recommendation.opportunityId} was not found in the simulated CRM snapshot.`);
+  if (!opportunity) throw new WritebackError("OPPORTUNITY_NOT_FOUND", `Opportunity ${recommendation.opportunityId} was not found in the CRM snapshot.`);
   if (options.expectedOpportunityVersion !== undefined && opportunity.version !== options.expectedOpportunityVersion) throw new WritebackError("VERSION_CONFLICT", `Opportunity version ${opportunity.version} does not match expected version ${options.expectedOpportunityVersion}.`);
 
   switch (recommendation.actionType) {
@@ -177,7 +200,12 @@ function applyFieldUpdate(snapshot: SimulatedCrmSnapshot, recommendation: Approv
   const fieldName = mapField(recommendation, options);
   const field = opportunity.fields[fieldName];
   if (!field) throw new WritebackError("CRM_FIELD_MISSING", `CRM field ${fieldName} is missing from opportunity ${recommendation.opportunityId}.`);
+  if (options.deniedFields.includes(fieldName)) throw new WritebackError("FIELD_PERMISSION_DENIED", `CRM field-level permissions deny writes to ${fieldName}.`);
+  if (!options.writableFields.includes(fieldName) && fieldName !== "Amount") throw new WritebackError("FIELD_PERMISSION_DENIED", `CRM field ${fieldName} is not in the writeback allowlist.`);
   const beforeValue = field.value;
+  if (options.enforceCurrentValueMatch && recommendation.currentValue !== undefined && recommendation.currentValue !== null && String(beforeValue) !== recommendation.currentValue) {
+    throw new WritebackError("WRITEBACK_CONFLICT", `CRM value for ${fieldName} changed after approval.`);
+  }
   const afterValue = coerceValue(recommendation.suggestedValue, field.dataType, fieldName);
 
   opportunity.fields[fieldName] = { ...field, value: afterValue, updatedAt: now };
@@ -252,6 +280,46 @@ function applyRollback(snapshot: SimulatedCrmSnapshot, change: WritebackChange, 
   if (opportunity) opportunity.version += 1;
   const original = snapshot.writebackAttempts.find((attempt) => attempt.recommendationId === recommendationId && attempt.change?.targetId === change.targetId && attempt.status === "success");
   if (original) original.status = "rolled_back";
+}
+
+
+function approvalRequirementFor(recommendation: ApprovalRecommendation): WritebackApprovalRequirement {
+  if (recommendation.crmField === "Amount") return "disabled_admin_only";
+  if (isClosedWonLostTransition(recommendation)) return "out_of_scope";
+  if (recommendation.riskLevel === "high" || STAGE_FORECAST_FIELDS.has(recommendation.crmField ?? "")) return "manager_approval";
+  if (recommendation.riskLevel === "medium" || recommendation.crmField === "CloseDate") return "approval_required";
+  return "approval_light";
+}
+
+function isClosedWonLostTransition(recommendation: ApprovalRecommendation): boolean {
+  if (recommendation.crmField !== "StageName") return false;
+  const value = recommendation.suggestedValue?.trim().toLowerCase();
+  return value !== undefined && OUT_OF_SCOPE_TERMINAL_VALUES.has(value);
+}
+
+function simulateAdapterPreflight(snapshot: SimulatedCrmSnapshot, recommendation: ApprovalRecommendation, options: ParsedOptions): { success: true; retryCount: number } | { success: false; retryCount: number; code: WritebackApiErrorCode | "SIMULATED_WRITEBACK_FAILURE"; message: string } {
+  if (options.validationFailureRecommendationIds.includes(recommendation.id)) {
+    return { success: false, retryCount: 0, code: "CRM_VALIDATION_ERROR", message: `CRM validation rejected recommendation ${recommendation.id}.` };
+  }
+  if (options.failRecommendationIds.includes(recommendation.id)) {
+    return { success: false, retryCount: 0, code: "SIMULATED_WRITEBACK_FAILURE", message: `Simulated writeback failure for recommendation ${recommendation.id}.` };
+  }
+  if (options.timeoutRecommendationIds.includes(recommendation.id)) {
+    return { success: false, retryCount: options.maxRetries, code: "API_TIMEOUT", message: `CRM API timed out for recommendation ${recommendation.id}.` };
+  }
+  if (options.retryableFailureRecommendationIds.includes(recommendation.id)) {
+    const previousFailures = snapshot.writebackAttempts.filter((attempt) => attempt.recommendationId === recommendation.id && attempt.status === "failed" && attempt.errorCode === "API_ERROR").length;
+    if (previousFailures === 0 && options.maxRetries === 0) {
+      return { success: false, retryCount: 0, code: "API_ERROR", message: `Retryable CRM API error for recommendation ${recommendation.id}.` };
+    }
+    return { success: true, retryCount: previousFailures === 0 ? 1 : 0 };
+  }
+  return { success: true, retryCount: 0 };
+}
+
+function attemptedRetryCount(recommendation: ApprovalRecommendation, options: ParsedOptions): number {
+  if (options.timeoutRecommendationIds.includes(recommendation.id)) return options.maxRetries;
+  return 0;
 }
 
 function mapField(recommendation: ApprovalRecommendation, options: ParsedOptions): string {

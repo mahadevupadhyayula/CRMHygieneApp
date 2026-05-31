@@ -12,6 +12,8 @@ import type {
   simulatedNoteSummarySchema,
   simulatedOwnerAssignmentSchema,
   simulatedRiskTagSchema,
+  writebackApiErrorCodeSchema,
+  writebackApprovalRequirementSchema,
   writebackAttemptSchema,
   writebackChangeSchema,
   writebackOptionsSchema,
@@ -27,6 +29,8 @@ export type SimulatedRiskTag = z.infer<typeof simulatedRiskTagSchema>;
 export type SimulatedNoteSummary = z.infer<typeof simulatedNoteSummarySchema>;
 export type SimulatedOwnerAssignment = z.infer<typeof simulatedOwnerAssignmentSchema>;
 export type WritebackChange = z.infer<typeof writebackChangeSchema>;
+export type WritebackApprovalRequirement = z.infer<typeof writebackApprovalRequirementSchema>;
+export type WritebackApiErrorCode = z.infer<typeof writebackApiErrorCodeSchema>;
 export type WritebackAttempt = z.infer<typeof writebackAttemptSchema>;
 export type SimulatedCrmSnapshot = z.infer<typeof simulatedCrmSnapshotSchema>;
 export type WritebackOptions = z.input<typeof writebackOptionsSchema>;

@@ -124,6 +124,7 @@ function assertPermission(recommendation: ApprovalRecommendation, actor: Approva
   const field = recommendation.crmField;
   if (recommendation.riskLevel === "high") throw new ApprovalWorkflowError("MANAGER_REQUIRED", "High-risk recommendations require a manager approval.");
   if (field && FORECAST_FIELDS.has(field) && actor.role === "ae") throw new ApprovalWorkflowError("FORECAST_APPROVAL_FORBIDDEN", "AEs cannot approve forecast-changing recommendations.");
+  if (!field && recommendation.riskLevel === "low" && (actor.role === "ae" || actor.role === "revops")) return;
   if (actor.role === "revops" && field && options.revOpsApprovableFields.includes(field)) return;
   if (actor.role === "ae" && field && options.aeApprovableFields.includes(field)) return;
 
