@@ -21,3 +21,12 @@ Stage 14 — Evaluation Harness and Regression Suite.
 - Persist eval metric history once a CI artifact store or dashboard exists.
 - Add real production traces only after redaction, customer-authorization checks, and fixture review workflows are available.
 - Expand eval metrics with severity-weighted precision/recall once recommendation taxonomy stabilizes further.
+
+## Stage 15 — Read-only CRM Integration
+
+- Selected HubSpot as the first CRM integration target.
+- Added a mocked, read-only HubSpot adapter that syncs companies, contacts, deals, notes, tasks, owners, selected email activity, and CRM deal field snapshots into normalized local objects.
+- Added read-only enforcement through a guarded client wrapper; sync code never calls CRM writeback.
+- Added unit coverage for response mapping, pagination, auth failures, rate limits, missing permissions, field mapping, missing fields, deleted records, duplicate records, field type mismatches, absent custom fields, partial sync failures, and read-only enforcement.
+- Added integration coverage for mock deal/note/activity sync, local CRM snapshot creation, large note volumes, no-writeback behavior, and logged sync failures.
+- Next stage should replace the mocked HubSpot client with an OAuth-backed read-scope client while keeping the normalized schema and read-only boundary unchanged.
