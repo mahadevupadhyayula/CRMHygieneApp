@@ -94,3 +94,9 @@ Stage 10 tests must cover the approval state machine, role-based permissions, co
 Stage 11 tests cover the pure writeback boundary before any live CRM adapter is introduced. Unit tests validate approved-only writes, rejected and unapproved blocks, high-risk manager enforcement, simulated failure logging, before/after preservation, rollback, idempotency, missing fields, invalid field mappings, type mismatches, concurrent version conflicts, stale-source blocks, retry after failure, high-risk rollback, and duplicate task prevention.
 
 Integration tests cover approval-to-writeback flow for next-step field updates, task creation, manager-approved forecast changes, AE forecast approval denial, and failed writebacks surfacing in the audit log.
+
+## Stage 14 — Evaluation Harness and Regression Suite
+
+Stage 14 adds a dedicated `tests/evals` suite for golden, fixture-backed quality gates across extraction, validation, comparison, scoring, recommendations, safety, and end-to-end deal analysis. The eval corpus contains 53 deal-context fixtures: 10 clean/healthy, 10 missing-field, 10 stale-field, 10 contradiction, 10 high-risk forecast, and 3 explicit safety fixtures for unauthorized evidence, ambiguous evidence, and customer-facing message safeguards.
+
+The harness reports extraction precision, evidence coverage, invalid recommendation rate, missing recommendation rate, false positive recommendation rate, approval policy correctness, audit coverage, and writeback safety. Golden tests require recommendations to have evidence, high-risk recommendations to require strict approval or be blocked, unauthorized evidence to stay out of recommendations, ambiguous sources to avoid CRM updates, customer-facing message-like actions to avoid auto-send behavior, and audit coverage to remain 100%.
