@@ -2080,3 +2080,34 @@ Required invariants:
 - RevOps approval fields must be configured explicitly when outside defaults.
 - Read-only users and auditors cannot perform actions.
 - Deleted, stale, missing-evidence, duplicate, and stale-version transitions must fail before mutation.
+
+## Stage 11 — Simulated CRM Writeback Agent Contract
+
+The simulated writeback agent applies approved recommendations to an in-memory CRM snapshot only. It is the safety and contract layer for future real CRM adapters, not a Salesforce or HubSpot integration.
+
+### Public API
+
+```ts
+executeWriteback({ snapshot, recommendation, actor, options }): WritebackResult
+rollbackWriteback({ snapshot, attemptId, actor, now }): WritebackResult
+```
+
+### Input Requirements
+
+- `snapshot` must contain opportunity field snapshots plus arrays for simulated tasks, risk tags, note summaries, owner assignments, writeback attempts, and audit events.
+- `recommendation` must conform to the Stage 10 approval recommendation schema.
+- `actor` must conform to the Stage 10 approval actor schema.
+- `options` may include `now`, `idempotencyKey`, field mappings, expected opportunity version, stale-source policy, and simulated failure recommendation IDs.
+
+### Output Guarantees
+
+- Returns a new validated snapshot and does not mutate the caller's snapshot object.
+- Every execution path records a writeback attempt.
+- Every execution path records an approval audit event with writeback metadata.
+- Successful field updates preserve before and after values.
+- Duplicate successful idempotency keys skip the second write.
+- Rollback uses the original attempt change record to restore the previous simulated state.
+
+### Blocking Error Codes
+
+The agent normalizes failed writes into attempt `errorCode` values such as `RECOMMENDATION_NOT_APPROVED`, `HIGH_RISK_MANAGER_REQUIRED`, `FORECAST_PERMISSION_DENIED`, `SOURCE_STALE`, `VERSION_CONFLICT`, `CRM_FIELD_MISSING`, `INVALID_FIELD_MAPPING`, `VALUE_TYPE_MISMATCH`, `SUGGESTED_VALUE_REQUIRED`, and `SIMULATED_WRITEBACK_FAILURE`.

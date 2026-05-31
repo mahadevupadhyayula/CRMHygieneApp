@@ -88,3 +88,9 @@ Stage 8 tests cover the pure scoring agent and fixture-backed end-to-end flow fr
 ## Stage 10 Approval Workflow Tests
 
 Stage 10 tests must cover the approval state machine, role-based permissions, concurrency, audit integrity, and feedback creation. Required cases include pending-to-approved, pending-to-edited, pending-to-rejected, pending-to-snoozed, approved-to-executed, approved-to-failed, rejected-cannot-execute, snoozed-card reappearance, audit event creation for every transition, feedback creation for approval/edit/rejection/snooze, high-risk manager approval, AE forecast denial, configured RevOps approval, read-only denial, auditor view-only behavior, edited value persistence, double clicks, concurrent stale-version edits, deleted recommendations, removed evidence, stale recommendations, missing rejection reasons, invalid snooze dates, and insufficient approver permissions.
+
+## Stage 11 Simulated CRM Writeback Tests
+
+Stage 11 tests cover the pure writeback boundary before any live CRM adapter is introduced. Unit tests validate approved-only writes, rejected and unapproved blocks, high-risk manager enforcement, simulated failure logging, before/after preservation, rollback, idempotency, missing fields, invalid field mappings, type mismatches, concurrent version conflicts, stale-source blocks, retry after failure, high-risk rollback, and duplicate task prevention.
+
+Integration tests cover approval-to-writeback flow for next-step field updates, task creation, manager-approved forecast changes, AE forecast approval denial, and failed writebacks surfacing in the audit log.
