@@ -29,3 +29,5 @@ playwright-report/
 
 # system
 .DS_Store
+*.tsbuildinfo
+tsconfig.tsbuildinfo
