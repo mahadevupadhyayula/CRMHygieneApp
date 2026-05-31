@@ -597,3 +597,12 @@ Implemented `lib/agents/scoring` as the deterministic hygiene scoring and foreca
 - Persistence remains out of scope for Stage 8. Future stages can map `HygieneScoreResult` into the Prisma `HygieneScore` table and related recommendation records.
 - Recommendation generation should consume dimension evidence and `riskLevel`; it should not recreate unsupported risks from missing source data.
 - If new comparison issue types or extracted fact types are added, update the scoring dimension mapping and risk contribution rules in `lib/agents/scoring/index.ts`.
+
+## Stage 9 — Recommendation and Approval Cards
+
+- Added `lib/agents/recommendation` to transform validated comparisons and risk findings into approval cards.
+- Approval cards now carry proposed action, current CRM value, suggested value, reason, evidence, confidence, risk level, required approver, approval policy, and approval levels.
+- Approval enforcement maps low-risk actions to no approval, medium-risk actions to standard approval, and high-risk field updates to strict approval. Amount changes can also be blocked by policy.
+- The engine suppresses recommendations with no evidence, rejected/low-confidence facts, unsupported fields, existing pending cards, and snoozed similar cards.
+- Added Stage 9 unit and integration tests plus `docs/stages/stage-09-recommendation.md`.
+
