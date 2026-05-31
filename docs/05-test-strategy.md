@@ -83,3 +83,8 @@ Stage 6 test files include focused unit coverage for all requested validation ch
 ## Stage 8 — Hygiene Scoring and Forecast Risk
 
 Stage 8 tests cover the pure scoring agent and fixture-backed end-to-end flow from ingestion through extraction, validation, comparison, and scoring. Coverage includes healthy-score bounds, next-step clarity, forecast contradictions, close-date pressure, procurement/legal/security blockers, stakeholder and owner gaps, issue resolution, 0–100 clamping, missing-data guardrails, duplicate issue handling, admin-configured weights, and seeded deal scenarios for healthy, procurement-blocked, no-note, and contradictory-note opportunities.
+
+
+## Stage 10 Approval Workflow Tests
+
+Stage 10 tests must cover the approval state machine, role-based permissions, concurrency, audit integrity, and feedback creation. Required cases include pending-to-approved, pending-to-edited, pending-to-rejected, pending-to-snoozed, approved-to-executed, approved-to-failed, rejected-cannot-execute, snoozed-card reappearance, audit event creation for every transition, feedback creation for approval/edit/rejection/snooze, high-risk manager approval, AE forecast denial, configured RevOps approval, read-only denial, auditor view-only behavior, edited value persistence, double clicks, concurrent stale-version edits, deleted recommendations, removed evidence, stale recommendations, missing rejection reasons, invalid snooze dates, and insufficient approver permissions.

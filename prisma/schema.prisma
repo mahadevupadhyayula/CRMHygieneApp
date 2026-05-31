@@ -63,7 +63,12 @@ enum RecommendationStatus {
   READY
   PENDING_APPROVAL
   APPROVED
+  EDITED
   REJECTED
+  SNOOZED
+  EXECUTED
+  FAILED
+  CANCELLED
   APPLIED
   DISMISSED
 }
@@ -71,7 +76,11 @@ enum RecommendationStatus {
 enum ApprovalStatus {
   PENDING
   APPROVED
+  EDITED
   REJECTED
+  SNOOZED
+  EXECUTED
+  FAILED
   APPLIED
   CANCELLED
 }
@@ -88,6 +97,7 @@ enum AuditEventType {
   RECOMMENDATION_CREATED
   APPROVAL_REQUESTED
   APPROVAL_DECIDED
+  APPROVAL_TRANSITIONED
   RECOMMENDATION_APPLIED
   FEEDBACK_RECORDED
   RECORD_UPDATED
@@ -302,9 +312,15 @@ model Recommendation {
   fieldName         String
   currentValue      String?
   proposedValue     String?
+  editedValue       String?
+  rejectionReason   String?
+  snoozedUntil      DateTime?
   rationale         String
   confidence        Float                @default(0)
   status            RecommendationStatus @default(DRAFT)
+  approvalVersion   Int                  @default(0)
+  staleAt           DateTime?
+  deletedAt         DateTime?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 
@@ -334,6 +350,9 @@ model ApprovalAction {
   requestedAt      DateTime       @default(now())
   decidedAt        DateTime?
   appliedAt        DateTime?
+  editedValue      String?
+  rejectionReason  String?
+  snoozedUntil     DateTime?
 
   recommendation Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
   auditEvents    AuditEvent[]
