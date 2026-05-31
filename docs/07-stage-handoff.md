@@ -2,22 +2,22 @@
 
 ## Current completed stage
 
-Stage 13 — Coordination Actions.
+Stage 14 — Evaluation Harness and Regression Suite.
 
 ## What changed
 
-- Added a coordination agent that suggests internal follow-up tasks and draft messages from validated risks and comparisons.
-- Added owner resolution, blocked-owner handling, review-required mode, customer-facing draft-only safeguards, sensitive evidence redaction, and duplicate suppression.
-- Added exhaustive unit tests for SE, legal, security, finance/deal desk, AE, manager, duplicate-task, customer draft-only, and sensitive-evidence cases.
-- Documented the Stage 13 scope, safety behavior, tests, and remaining out-of-scope integrations.
+- Added a dedicated evaluation harness in `tests/evals` that runs deterministic end-to-end deal hygiene analysis across extraction, validation, comparison, scoring, recommendations, safety checks, and simulated writeback guardrails.
+- Added 53 golden deal-context fixtures covering clean/healthy deals, missing fields, stale fields, contradictions, high-risk forecast scenarios, unauthorized evidence, ambiguous sources, and customer-facing message safeguards.
+- Added metrics reporting for extraction precision, evidence coverage, invalid recommendation rate, missing recommendation rate, false positive recommendation rate, approval policy correctness, audit coverage, and writeback safety.
+- Added Stage 14 documentation and updated the test strategy to describe eval coverage and safety proof points.
 
 ## Validation commands
 
 - `npx tsc --noEmit`
-- `npx vitest run tests/unit/stage13-coordination.test.ts`
+- `npx vitest run tests/evals/stage14-regression.test.ts`
 
 ## Notes for the next stage
 
-- Persist coordination actions alongside recommendation cards once backend storage is introduced.
-- Route approved internal tasks into the CRM or collaboration system only after preserving the draft-only customer-facing safeguards.
-- Add UI surfaces for reviewing blocked owner resolution and sensitive evidence audit links.
+- Persist eval metric history once a CI artifact store or dashboard exists.
+- Add real production traces only after redaction, customer-authorization checks, and fixture review workflows are available.
+- Expand eval metrics with severity-weighted precision/recall once recommendation taxonomy stabilizes further.
