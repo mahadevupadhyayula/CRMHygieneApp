@@ -606,3 +606,47 @@ Implemented `lib/agents/scoring` as the deterministic hygiene scoring and foreca
 - The engine suppresses recommendations with no evidence, rejected/low-confidence facts, unsupported fields, existing pending cards, and snoozed similar cards.
 - Added Stage 9 unit and integration tests plus `docs/stages/stage-09-recommendation.md`.
 
+
+## Stage 10 — Approval Workflow, Audit Log, and Feedback Loop
+
+### Summary of Implementation
+
+Stage 10 adds a pure approval workflow boundary that accepts a recommendation, actor, action, and policy options, then returns the updated recommendation plus audit and feedback events. The implementation:
+
+- Supports the `pending`, `approved`, `edited`, `rejected`, `snoozed`, `executed`, `failed`, and `cancelled` workflow statuses.
+- Enforces narrow legal transitions and rejects duplicate clicks or terminal-state changes.
+- Creates an audit event for every successful status transition.
+- Creates feedback events for approvals, edits, rejections, and snoozes.
+- Saves edited values as both `suggestedValue` and `editedValue` so the final executable value is audited.
+- Requires rejection reasons and future snooze dates.
+- Re-surfaces snoozed cards through `visibleRecommendations` when their due time has passed.
+- Enforces manager-only high-risk approvals, AE forecast-change restrictions, configurable RevOps fields, read-only blocks, and auditor view-only behavior.
+- Blocks stale, deleted, evidence-removed, and stale-version workflow attempts.
+
+### Files Changed
+
+- `lib/agents/approval/schemas.ts` — Stage 10 approval workflow schemas for statuses, actions, actors, recommendations, audit events, feedback events, and policy options.
+- `lib/agents/approval/types.ts` — TypeScript types inferred from the Stage 10 schemas.
+- `lib/agents/approval/index.ts` — Workflow transition engine, permission checks, concurrency checks, audit/feedback creation, and snoozed-card visibility helper.
+- `prisma/schema.prisma` — Expanded recommendation and approval status enums plus persistence fields for edited values, rejection reasons, snooze dates, approval versions, stale timestamps, and deleted timestamps.
+- `tests/unit/stage10-approval-workflow.test.ts` — Unit tests for transition behavior, audit and feedback integrity, double clicks, concurrency, snooze reappearance, and edge cases.
+- `tests/integration/stage10-approval-permissions.test.ts` — Integration-style role tests for managers, AEs, RevOps, read-only users, auditors, and edited-value audit integrity.
+- `docs/stages/stage-10-approval-workflow.md` — Stage 10 behavior, status model, permission rules, integrity guarantees, and test plan.
+
+### Tests Added
+
+- Added Stage 10 unit coverage for pending-to-approved, pending-to-edited, pending-to-rejected, pending-to-snoozed, approved-to-executed, approved-to-failed, rejected-cannot-execute, snoozed reappearance, audit event creation for every transition, feedback creation for approval/edit/rejection/snooze, duplicate approval clicks, concurrent edit/approve version conflicts, deleted recommendations, removed evidence, stale recommendations, rejection without reason, and invalid snooze dates.
+- Added Stage 10 integration coverage for high-risk manager approval, AE forecast-change denial, configured RevOps field approval, read-only denial, auditor view-only behavior, edited value persistence/auditing, and approver field-permission failures.
+
+### Test Commands Run and Results
+
+- `npm run prisma:validate` — passed.
+- `npm test -- --run tests/unit/stage10-approval-workflow.test.ts tests/integration/stage10-approval-permissions.test.ts` — passed.
+
+### Context for the Next Codex Session
+
+- Start by reading `docs/stages/stage-10-approval-workflow.md`, `lib/agents/approval/index.ts`, `lib/agents/approval/schemas.ts`, and the Stage 10 tests.
+- Treat `transitionRecommendation` as the approval workflow boundary: callers should persist its returned recommendation, audit event, and feedback event atomically.
+- Do not mutate recommendation state without writing the corresponding audit event.
+- Keep feedback creation aligned with product-learning signals for approval, edit, rejection, and snooze actions.
+- When adding persistence or API routes, preserve optimistic concurrency via `expectedVersion`/`approvalVersion` and block deleted, stale, or evidence-invalid recommendations before state changes.

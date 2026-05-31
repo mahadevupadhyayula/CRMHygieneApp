@@ -2062,3 +2062,21 @@ The comparison layer does not write to Prisma, calculate hygiene scores, create 
 - `evidence`: field/fact/source-backed evidence items.
 
 The scoring contract is deterministic and non-persistent. It must not create recommendations, request approvals, write audit events, or write back to CRM. Missing source data can reduce hygiene dimensions, but must not create unsupported blocker or contradiction risk.
+
+
+## Stage 10 Approval Workflow Contract
+
+The approval workflow exposes `transitionRecommendation(input)` from `lib/agents/approval`. The boundary accepts a workflow recommendation, actor, action, optional action payload, and policy options. It returns the updated recommendation plus an audit event and, for approval/edit/rejection/snooze actions, a feedback event.
+
+Required invariants:
+
+- Every successful status change must create one audit event.
+- Approval, edit, rejection, and snooze actions must create feedback events.
+- Rejections require a non-empty reason.
+- Snoozes require a valid future date.
+- Edited values must be saved and included in audit metadata.
+- High-risk cards require manager approval.
+- AEs cannot approve forecast-changing fields.
+- RevOps approval fields must be configured explicitly when outside defaults.
+- Read-only users and auditors cannot perform actions.
+- Deleted, stale, missing-evidence, duplicate, and stale-version transitions must fail before mutation.
