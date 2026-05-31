@@ -2,9 +2,77 @@
 
 ## Current Stage Completed
 
-Stage 6 — Validation Agent
+Stage 11 — Simulated CRM Writeback
 
-Stage 6 is complete because the repository now has a deterministic Validation Agent that accepts Stage 5 extracted facts and source metadata, validates evidence and authorization safety, assigns review/rejection statuses, classifies action risk, detects contradictions, and preserves structured reasons for downstream CRM comparison and recommendation gates.
+Stage 11 is complete because the repository now has a deterministic, in-memory writeback agent that safely applies only approved recommendations to a local CRM snapshot, records attempts and audit events, preserves before/after values, supports idempotency, and can roll back successful simulated writes without connecting to Salesforce or HubSpot.
+
+## Stage 11 — Simulated CRM Writeback
+
+### Summary of Implementation
+
+Stage 11 adds a pure writeback boundary under `lib/agents/writeback`. The writeback agent:
+
+- Exposes `executeWriteback(input)` for approved recommendation execution and `rollbackWriteback(input)` for corrections.
+- Validates simulated CRM snapshots, field snapshots, tasks, risk tags, note summaries, owner assignments, writeback attempts, options, and rollback inputs with Zod.
+- Supports local CRM field updates, task creation, risk tag creation, note summary creation, and internal owner assignment.
+- Requires recommendation status `approved` before any write can succeed.
+- Blocks rejected, pending, deleted, stale, unsupported, high-risk unauthorized, AE forecast, missing-field, invalid-mapping, type-mismatch, and stale-version writebacks.
+- Records writeback attempts for success, failure, duplicate idempotency skips, and rollback.
+- Records audit events for successful execution, failed execution, duplicate attempts, and rollback/correction.
+- Preserves before and after values in successful writeback attempts for rollback and audit review.
+- Prevents duplicate successful writes with stable idempotency keys while allowing retry after failed attempts.
+- Does not call Salesforce, HubSpot, OAuth, external APIs, or Prisma persistence.
+
+### Files Changed
+
+- `lib/agents/writeback/index.ts` — Stage 11 simulated writeback implementation, safety gates, action application, idempotency, audit event creation, failure logging, and rollback support.
+- `lib/agents/writeback/schemas.ts` — Zod schemas for simulated CRM snapshots, field values, tasks, tags, notes, owner assignments, writeback attempts, changes, options, execution inputs, and rollback inputs.
+- `lib/agents/writeback/types.ts` — TypeScript types inferred from the Stage 11 writeback schemas.
+- `tests/unit/stage11-writeback.test.ts` — focused unit coverage for writeback success, blocking rules, errors, before/after preservation, idempotency, retry, and rollback.
+- `tests/integration/stage11-writeback-flow.test.ts` — approval-to-writeback integration coverage for next-step updates, task creation, manager forecast updates, AE forecast denial, and audit failure visibility.
+- `docs/stages/stage-11-simulated-crm-writeback.md` — documented the Stage 11 goal, supported actions, safety rules, attempt/audit behavior, rollback, and out-of-scope boundaries.
+- `docs/04-agent-contracts.md` — documented the Stage 11 simulated writeback contract.
+- `docs/05-test-strategy.md` — added Stage 11 writeback test coverage.
+- `docs/08-decision-log.md` — recorded the decision to simulate CRM writeback before live CRM adapters.
+- `docs/07-stage-handoff.md` — updated this handoff for Stage 11.
+
+### Tests Added
+
+- Unit tests for approved recommendation writes, unapproved and rejected blocking, high-risk permission blocking, failed writeback logging, before/after preservation, rollback restoration, idempotency, missing CRM fields, invalid field mappings, type mismatches, concurrent writebacks, stale-source blocking, retry after failure, high-risk rollback, duplicate task prevention, and invalid rollback attempts.
+- Integration tests for approving next-step recommendations into field updates, approving task recommendations into task creation, manager-approved forecast changes, AE forecast approval denial, and writeback failure audit visibility.
+
+### Test Commands Run and Results
+
+- `npm test -- --run tests/unit/stage11-writeback.test.ts tests/integration/stage11-writeback-flow.test.ts` — passed.
+- `npx tsc --noEmit` — passed.
+
+### Known Limitations
+
+- Writeback state is in memory and is not persisted to Prisma.
+- Attempt and audit IDs are deterministic local IDs for tests, not production IDs.
+- Rollback is based on the stored simulated change record and does not model external CRM history, conflict detection after rollback, or partial external failures.
+- Field mappings are explicit local options and not yet admin-configured.
+- Task, tag, note, and owner objects are simplified and intentionally do not mirror Salesforce or HubSpot schemas.
+- There is no UI, background job, adapter, OAuth, or live CRM API call in Stage 11.
+
+### Decisions Made
+
+- Keep writeback pure and deterministic so safety behavior can be exhaustively tested before adding real CRM side effects.
+- Treat failed attempts as retryable and successful attempts as idempotency barriers.
+- Store before/after values on each successful attempt so rollback can restore prior state without recomputing source facts.
+- Keep writeback separate from the approval transition state machine while reusing Stage 10 recommendation, actor, and audit schemas.
+
+### Next Recommended Stage
+
+Stage 12 should persist writeback attempts/audit events or introduce the adapter boundary for future CRM integrations, while still avoiding live Salesforce/HubSpot writes until credentials, auth, partial-failure semantics, and operational guardrails are designed.
+
+### Context for the Next Codex Session
+
+- Start by reading `docs/stages/stage-11-simulated-crm-writeback.md`, `lib/agents/writeback/index.ts`, `lib/agents/writeback/schemas.ts`, and the Stage 11 tests.
+- Preserve the invariant that only approved recommendations can write.
+- Do not add live CRM calls without an explicit stage plan.
+- If persistence is added, keep the current pure module tests and add repository/adapter tests around it rather than replacing the in-memory contract.
+- Re-run `npm run prisma:validate`, `npx tsc --noEmit`, and `npm test` after schema, persistence, adapter, or writeback changes.
 
 ## Stage 6 — Validation Agent
 
