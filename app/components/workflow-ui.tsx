@@ -9,8 +9,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Primary navigation">
-        <Link className="brand" href="/dashboard">CRM Hygiene</Link>
+        <Link className="brand" href="/">CRM Hygiene</Link>
         <nav>
+          <Link href="/">Home</Link>
           <Link href="/dashboard">Dashboard</Link>
           <Link href="/approvals">Approval Inbox</Link>
           <Link href="/audit">Audit Log</Link>
