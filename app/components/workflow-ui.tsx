@@ -261,5 +261,3 @@ function KeyValueGrid({ values }: { values: Record<string, string> }) {
 function ProgressRow({ label, value }: { label: string; value: number }) {
   return <div className="progress-row"><span>{label}</span><meter min="0" max="100" value={value}>{value}</meter><strong>{value}</strong></div>;
 }
-
-export { findDeal };
