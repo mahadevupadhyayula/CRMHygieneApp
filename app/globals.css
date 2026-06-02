@@ -18,13 +18,13 @@ body { background: var(--background); color: var(--foreground); font-family: Ari
 a { color: inherit; }
 main { min-height: 100vh; }
 
-.home-shell { display: grid; place-items: center; padding: 2rem; }
-.hero-card { width: min(100%, 52rem); border: 1px solid #dbeafe; border-radius: 1.5rem; background: #fff; padding: clamp(2rem, 5vw, 4rem); box-shadow: 0 24px 80px rgb(15 23 42 / 10%); }
+.home-shell { display: grid; place-items: center; padding: clamp(1.5rem, 4vw, 3rem); }
+.hero-card { width: min(100%, 65rem); border: 1px solid #dbeafe; border-radius: 1.5rem; background: #fff; padding: clamp(2.5rem, 6vw, 5rem); box-shadow: 0 24px 80px rgb(15 23 42 / 10%); }
 .eyebrow { margin: 0 0 1rem; color: var(--accent); font-size: .875rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-h1 { margin: 0; font-size: clamp(2.25rem, 6vw, 4.75rem); line-height: .95; }
-.principle, .page-description { max-width: 46rem; margin: 1rem 0 0; color: var(--muted); font-size: 1.05rem; line-height: 1.5; }
-.hero-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 2rem; }
-.button-link, button { border: 0; border-radius: .8rem; background: var(--accent); color: #fff; cursor: pointer; display: inline-flex; font-weight: 700; justify-content: center; padding: .75rem 1rem; text-decoration: none; }
+h1 { margin: 0; font-size: clamp(2.8rem, 7.5vw, 5.9rem); line-height: .95; }
+.principle, .page-description { max-width: 52rem; margin: 1rem 0 0; color: var(--muted); font-size: 1.3rem; line-height: 1.5; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
+.button-link, button { border: 0; border-radius: .8rem; background: var(--accent); color: #fff; cursor: pointer; display: inline-flex; font-size: 1.1rem; font-weight: 700; justify-content: center; padding: .95rem 1.25rem; text-decoration: none; }
 .button-link.secondary { background: #e0e7ff; color: #1e3a8a; }
 button:hover, .button-link:hover { background: var(--accent-dark); }
 
