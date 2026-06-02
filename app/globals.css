@@ -58,6 +58,8 @@ td a { color: var(--accent); font-weight: 700; }
 .review-grid, .settings-grid { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .panel, .empty-state { padding: 1rem; }
 .panel h2, .empty-state h2, .approval-card h2 { margin: 0 0 .75rem; }
+.approval-card h2 { font-size: 1.35rem; line-height: 1.25; }
+.approval-card p { color: var(--muted); font-size: 1rem; line-height: 1.55; }
 .key-grid { display: grid; gap: .75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
 .key-grid div, .card-fields div { background: #f8fafc; border: 1px solid var(--border); border-radius: .75rem; padding: .75rem; }
 dt { color: var(--muted); font-size: .78rem; font-weight: 800; text-transform: uppercase; }
@@ -76,11 +78,13 @@ meter { width: 100%; }
 .evidence-author { color: var(--muted); margin: 0 0 .5rem; }
 .evidence-text { line-height: 1.55; margin: 0; overflow-wrap: anywhere; }
 
-.approval-grid { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.approval-card { padding: 1rem; }
+.approval-grid { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); }
+.approval-card { padding: 1.5rem; }
 .card-topline { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; justify-content: space-between; }
-.card-fields { display: grid; gap: .75rem; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: .75rem 0; }
-.approval-actions { border-top: 1px solid var(--border); display: grid; gap: .65rem; grid-template-columns: 1fr 1fr repeat(4, auto); margin-top: 1rem; padding-top: 1rem; }
+.card-fields { display: grid; gap: .75rem; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 1rem 0; }
+.card-fields dt { font-size: .82rem; letter-spacing: .04em; }
+.card-fields dd { font-size: 1rem; line-height: 1.45; }
+.approval-actions { border-top: 1px solid var(--border); display: grid; gap: .65rem; grid-template-columns: 1fr 1fr repeat(4, auto); margin-top: 1rem; overflow-x: auto; padding-top: 1rem; }
 .approval-actions input { min-width: 0; }
 .audit-list { display: grid; gap: .75rem; list-style: none; margin: 0; padding: 0; }
 .audit-list li { background: #fff; border: 1px solid var(--border); border-radius: .85rem; padding: 1rem; }
