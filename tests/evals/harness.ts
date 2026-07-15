@@ -1,8 +1,9 @@
-import { compareFields } from "../../lib/agents/comparison";
-import { MockModelProvider, StructuredExtractionAgent, type ExtractedFact } from "../../lib/agents/extraction";
-import { generateRecommendations, type RecommendationCard } from "../../lib/agents/recommendation";
-import { scoreOpportunity, type HygieneScoreResult } from "../../lib/agents/scoring";
-import { validateFacts, type ValidationResult } from "../../lib/agents/validation";
+import type { FieldComparison } from "../../lib/agents/comparison";
+import { MockModelProvider, type ExtractedFact } from "../../lib/agents/extraction";
+import type { RecommendationCard } from "../../lib/agents/recommendation";
+import type { HygieneScoreResult } from "../../lib/agents/scoring";
+import type { ValidationResult } from "../../lib/agents/validation";
+import { runHygieneWorkflow } from "../../lib/workflows";
 import { executeWriteback, type SimulatedCrmSnapshot } from "../../lib/agents/writeback";
 import type { ApprovalRecommendation } from "../../lib/agents/approval";
 import { EVAL_REFERENCE_DATE, type DealEvalFixture } from "./fixtures";
@@ -19,7 +20,7 @@ export type DealEvalResult = {
   fixture: DealEvalFixture;
   facts: ExtractedFact[];
   validationResults: ValidationResult[];
-  comparisons: ReturnType<typeof compareFields>;
+  comparisons: FieldComparison[];
   score: HygieneScoreResult;
   recommendations: RecommendationCard[];
   auditEvents: EvalAuditEvent[];
@@ -45,49 +46,42 @@ export type EvalMetrics = {
 };
 
 export async function runDealEval(fixture: DealEvalFixture): Promise<DealEvalResult> {
-  const extractor = new StructuredExtractionAgent(new MockModelProvider());
-  const facts = await extractor.extractDealFacts({ opportunity: fixture.opportunity, sourceItems: fixture.sourceItems });
-  const validationResults = validateFacts({
-    facts,
-    sources: fixture.sourceItems.map((item) => ({ id: item.id, occurredAt: item.occurredAt, visibility: visibilityOf(item), metadata: item.metadata })),
-    options: { referenceDate: EVAL_REFERENCE_DATE, maxFactAgeDays: 30, minimumConfidence: 0.7, strictRecommendationEligibility: true },
-  });
-  const comparisons = compareFields({
+  const workflow = await runHygieneWorkflow({
+    workflowRunId: `eval-${fixture.id}`,
     opportunity: fixture.opportunity,
     crmSnapshot: fixture.crmSnapshot,
-    facts,
-    validationResults,
-    options: { referenceDate: EVAL_REFERENCE_DATE, staleNextStepDays: 14, urgentCloseWindowDays: 7, minimumHighSeverityConfidence: 0.7 },
-  });
-  const score = scoreOpportunity({
-    opportunity: fixture.opportunity,
-    crmSnapshot: fixture.crmSnapshot,
-    sourceItems: fixture.sourceItems.map((item) => ({ ...item, visibility: visibilityOf(item) })),
-    facts,
-    validationResults,
-    comparisons,
-    options: { referenceDate: EVAL_REFERENCE_DATE, staleActivityDays: 14, urgentCloseWindowDays: 7 },
-  });
-  const recommendations = generateRecommendations({
-    opportunity: fixture.opportunity,
-    comparisons,
-    facts,
-    validationResults,
+    sourceItems: fixture.sourceItems,
     options: {
+      referenceDate: EVAL_REFERENCE_DATE,
+      extractionProvider: new MockModelProvider(),
+      maxFactAgeDays: 30,
       minimumConfidence: 0.7,
-      includeDraftInternalMessages: true,
-      amountUpdatePolicy: "blocked",
-      approvers: {
-        manager: "mgr-1",
-        revOps: "revops-1",
-        dealOwner: "ae-1",
-        legal: "legal-1",
-        security: "security-1",
-        procurement: "proc-1",
-        finance: "finance-1",
+      strictRecommendationEligibility: true,
+      staleNextStepDays: 14,
+      urgentCloseWindowDays: 7,
+      minimumHighSeverityConfidence: 0.7,
+      scoringOptions: { staleActivityDays: 14, urgentCloseWindowDays: 7 },
+      recommendationOptions: {
+        minimumConfidence: 0.7,
+        includeDraftInternalMessages: true,
+        amountUpdatePolicy: "blocked",
+        approvers: {
+          manager: "mgr-1",
+          revOps: "revops-1",
+          dealOwner: "ae-1",
+          legal: "legal-1",
+          security: "security-1",
+          procurement: "proc-1",
+          finance: "finance-1",
+        },
       },
     },
   });
+  const facts = workflow.extractedFacts;
+  const validationResults = workflow.validationResults;
+  const comparisons = workflow.fieldComparisons;
+  const score = workflow.hygieneScore as HygieneScoreResult;
+  const recommendations = workflow.recommendations;
   const auditEvents = recommendations.map((recommendation) => ({
     id: `audit-${recommendation.id}`,
     recommendationId: recommendation.id,
@@ -232,9 +226,6 @@ function aggregateMetrics(metrics: EvalMetrics[]): EvalMetrics {
   };
 }
 
-function visibilityOf(source: { visibility?: string; metadata?: Record<string, unknown> }): string | undefined {
-  return source.visibility ?? (typeof source.metadata?.visibility === "string" ? source.metadata.visibility : undefined);
-}
 
 function isWritebackSupported(recommendation: RecommendationCard): boolean {
   return ["update_crm_field", "create_task", "add_risk_tag", "add_note_summary", "assign_internal_owner"].includes(recommendation.actionType);
