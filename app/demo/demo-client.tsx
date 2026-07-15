@@ -2,11 +2,12 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import type { ApprovalRecommendation } from "../../lib/agents/approval";
+import type { DemoSession } from "../../lib/demo/types";
 import { RecommendationCard } from "./components/recommendation-card";
+import { WritebackPanel } from "./components/writeback-panel";
 import type { RecommendationActionPayload } from "./components/recommendation-actions";
 
 type Scenario = { scenarioId: string; name: string; description: string; disclaimerText: string; defaultEditableTranscript: string };
-type DemoSession = { sessionId: string; scenarioId: string; transcript: string; recommendations: ApprovalRecommendation[]; crmSnapshot: { opportunities: Record<string, { fields: Record<string, { value: unknown; label?: string }> }> }; version: number };
 type WorkflowResult = {
   workflowRunId: string;
   extractedFacts: Array<{ factType: string; rawValue: string; normalizedValue: string; evidenceText: string; confidence: number; confidenceBand: string; sourceId: string }>;
@@ -76,7 +77,7 @@ export function DemoClient({ scenarios }: { scenarios: Scenario[] }) {
   const fields = Object.values(session?.crmSnapshot.opportunities ?? {})[0]?.fields ?? {};
 
   return <div className="demo-grid">
-    <section className="panel demo-disclaimer" data-testid="demo-disclaimer"><h2>Demo environment disclaimer</h2><p>{scenario.disclaimerText}</p><p><strong>Extraction is deterministic.</strong> CRM writeback is simulated; approval actions call the backend approval engine; writeback UI is not included in Phase 5.</p></section>
+    <section className="panel demo-disclaimer" data-testid="demo-disclaimer"><h2>Demo environment disclaimer</h2><p>{scenario.disclaimerText}</p><p><strong>Extraction is deterministic.</strong> CRM writeback is simulated; approval actions and writeback attempts call backend engines with server-side audit state.</p></section>
     <section className="panel" data-testid="scenario-panel"><h2>Scenario selector</h2><select data-testid="scenario-selector" value={scenarioId} onChange={(event) => { const next = event.target.value; setScenarioId(next); void createSession(next); }}>{scenarios.map((item) => <option key={item.scenarioId} value={item.scenarioId}>{item.name}</option>)}</select><p>{scenario.description}</p><button data-testid="reset-scenario" onClick={resetScenario} disabled={loading}>Reset Scenario</button></section>
     <section className="panel wide"><h2>Editable source transcript</h2><textarea data-testid="transcript-input" value={transcript} onChange={(event) => setTranscript(event.target.value)} rows={8} /></section>
     <section className="panel"><h2>Current CRM snapshot</h2><dl className="key-grid" data-testid="crm-snapshot">{Object.entries(fields).map(([field, info]) => <div key={field}><dt>{info.label ?? field}</dt><dd>{valueText(info.value)}</dd></div>)}</dl></section>
@@ -108,5 +109,6 @@ function Results({ result, session, onSessionUpdate }: { result: WorkflowResult;
     <section className="panel" data-testid="hygiene-score"><h2>Hygiene score</h2>{result.hygieneScore ? <><p className="score-hero"><span className="badge">{result.hygieneScore.score} · {result.hygieneScore.riskLevel}</span></p><p>{result.hygieneScore.explanation}</p></> : <p>No score available.</p>}</section>
     <section className="panel" data-testid="recommendations"><h2>Recommendations</h2>{actionError ? <p role="alert" data-testid="recommendation-error">{actionError}</p> : null}{session?.recommendations.length ? session.recommendations.map((item) => <RecommendationCard key={item.id} recommendation={item} onAction={actOnRecommendation} />) : result.recommendations.length ? result.recommendations.map((item) => <article className="mini-card" key={item.id}><h3>{item.proposedAction}</h3><p>{item.reason}</p><p>{item.crmField ?? "No field"}: {valueText(item.currentCrmValue)} → {valueText(item.suggestedValue)}</p><span>{item.status} · {item.riskLevel} · {pct(item.confidence)}</span></article>) : <p className="inline-empty">No recommendations.</p>}</section>
     <section className="panel wide" data-testid="final-status"><h2>Final workflow status</h2><p><strong>{result.finalStatus}</strong></p>{result.telemetry ? <p data-testid="telemetry-summary">Telemetry: {result.telemetry.factCount} facts, {result.telemetry.comparisonCount} comparisons, {result.telemetry.recommendationCount} recommendations, {result.telemetry.durationMs}ms, {result.telemetry.retryCount} retries.</p> : null}</section>
+    {session ? <WritebackPanel session={session} onSessionUpdate={onSessionUpdate} /> : null}
   </>;
 }
