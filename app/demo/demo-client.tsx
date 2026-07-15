@@ -82,7 +82,7 @@ export function DemoClient({ scenarios }: { scenarios: Scenario[] }) {
     <section className="panel wide"><h2>Editable source transcript</h2><textarea data-testid="transcript-input" value={transcript} onChange={(event) => setTranscript(event.target.value)} rows={8} /></section>
     <section className="panel"><h2>Current CRM snapshot</h2><dl className="key-grid" data-testid="crm-snapshot">{Object.entries(fields).map(([field, info]) => <div key={field}><dt>{info.label ?? field}</dt><dd>{valueText(info.value)}</dd></div>)}</dl></section>
     <section className="panel"><h2>Run analysis</h2><button data-testid="run-analysis" onClick={runAnalysis} disabled={loading || !session}>{loading ? "Analyzing…" : "Run Hygiene Analysis"}</button>{loading ? <p data-testid="loading-state">Loading backend analysis…</p> : null}{error ? <div className="error-box" data-testid="error-state"><strong>{error.code ?? "ERROR"}</strong><p>{error.message}</p>{error.recoverable ? <button onClick={() => createSession(scenarioId)}>Recreate session</button> : null}</div> : null}</section>
-    {workflowResult ? <Results result={workflowResult} session={session} onSessionUpdate={(nextSession) => setSession(nextSession)} /> : <section className="panel wide" data-testid="empty-results"><h2>Analysis results</h2><p className="inline-empty">Run backend hygiene analysis to populate extracted facts, evidence, comparisons, score, recommendations, final status, and telemetry.</p></section>}
+    {workflowResult ? <Results result={workflowResult} session={session} onSessionUpdate={(nextSession) => setSession(nextSession)} /> : <><section className="panel wide" data-testid="empty-results"><h2>Analysis results</h2><p className="inline-empty">Run backend hygiene analysis to populate extracted facts, evidence, comparisons, score, recommendations, final status, and telemetry.</p></section><TelemetryPanel session={session} /></>}
   </div>;
 }
 
@@ -108,7 +108,21 @@ function Results({ result, session, onSessionUpdate }: { result: WorkflowResult;
     <section className="panel" data-testid="crm-comparisons"><h2>CRM comparisons</h2>{result.fieldComparisons.length ? result.fieldComparisons.map((item) => <article className="mini-card" key={`${item.crmField}-${item.extractedValue}`}><h3>{item.crmField}</h3><p>CRM: {valueText(item.currentValue)}</p><p>Extracted: {item.extractedValue}</p><p>{item.issueType} · {item.severity} · {item.recommendationEligible ? "eligible" : "not eligible"}</p></article>) : <p className="inline-empty">No CRM differences detected.</p>}</section>
     <section className="panel" data-testid="hygiene-score"><h2>Hygiene score</h2>{result.hygieneScore ? <><p className="score-hero"><span className="badge">{result.hygieneScore.score} · {result.hygieneScore.riskLevel}</span></p><p>{result.hygieneScore.explanation}</p></> : <p>No score available.</p>}</section>
     <section className="panel" data-testid="recommendations"><h2>Recommendations</h2>{actionError ? <p role="alert" data-testid="recommendation-error">{actionError}</p> : null}{session?.recommendations.length ? session.recommendations.map((item) => <RecommendationCard key={item.id} recommendation={item} onAction={actOnRecommendation} />) : result.recommendations.length ? result.recommendations.map((item) => <article className="mini-card" key={item.id}><h3>{item.proposedAction}</h3><p>{item.reason}</p><p>{item.crmField ?? "No field"}: {valueText(item.currentCrmValue)} → {valueText(item.suggestedValue)}</p><span>{item.status} · {item.riskLevel} · {pct(item.confidence)}</span></article>) : <p className="inline-empty">No recommendations.</p>}</section>
-    <section className="panel wide" data-testid="final-status"><h2>Final workflow status</h2><p><strong>{result.finalStatus}</strong></p>{result.telemetry ? <p data-testid="telemetry-summary">Telemetry: {result.telemetry.factCount} facts, {result.telemetry.comparisonCount} comparisons, {result.telemetry.recommendationCount} recommendations, {result.telemetry.durationMs}ms, {result.telemetry.retryCount} retries.</p> : null}</section>
+    <TelemetryPanel result={result} session={session} />
     {session ? <WritebackPanel session={session} onSessionUpdate={onSessionUpdate} /> : null}
   </>;
+}
+
+function TelemetryPanel({ result, session }: { result?: WorkflowResult; session?: DemoSession }) {
+  const approvalCount = session?.recommendations.filter((item) => ["approved", "executed"].includes(item.status)).length ?? 0;
+  const retryCount = session?.writebackAttempts.reduce((total, attempt) => total + attempt.retryCount, 0) ?? result?.telemetry?.retryCount ?? 0;
+  const rows = [
+    ["Workflow duration", result?.telemetry ? `${result.telemetry.durationMs}ms` : "—"],
+    ["Extracted fact count", result ? String(result.telemetry?.factCount ?? result.extractedFacts.length) : "—"],
+    ["Recommendation count", result ? String(result.telemetry?.recommendationCount ?? result.recommendations.length) : "—"],
+    ["Approval count", String(approvalCount)],
+    ["Retry count", String(retryCount)],
+    ["Final workflow status", result?.finalStatus ?? "—"],
+  ];
+  return <section className="panel wide" data-testid="telemetry-panel"><h2>Measured workflow telemetry</h2><dl className="key-grid">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>;
 }
