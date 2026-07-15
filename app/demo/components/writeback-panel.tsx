@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { ApprovalActor, ApprovalRecommendation } from "../../../lib/agents/approval";
 import type { SimulatedCrmSnapshot, WritebackAttempt } from "../../../lib/agents/writeback";
 import type { DemoSession } from "../../../lib/demo/types";
@@ -29,8 +29,16 @@ export function WritebackPanel({ session, onSessionUpdate }: { session: DemoSess
   const [after, setAfter] = useState<SimulatedCrmSnapshot | undefined>();
   const [error, setError] = useState<{ code?: string; message: string }>();
   const [busy, setBusy] = useState(false);
-  const idempotencyKey = useRef(`demo-writeback-${session.sessionId}`);
   const eligible = useMemo(() => session.recommendations.filter(isApproved), [session.recommendations]);
+  const eligibleRecommendationIds = useMemo(() => eligible.map((rec) => rec.id).sort().join(":"), [eligible]);
+  const idempotencyKey = useMemo(() => `demo-writeback-${session.sessionId}-${eligibleRecommendationIds || "none"}`, [eligibleRecommendationIds, session.sessionId]);
+
+  useEffect(() => {
+    setRows([]);
+    setBefore(undefined);
+    setAfter(undefined);
+    setError(undefined);
+  }, [eligibleRecommendationIds, session.sessionId]);
   if (eligible.length === 0) return null;
 
   async function apply() {
@@ -38,7 +46,7 @@ export function WritebackPanel({ session, onSessionUpdate }: { session: DemoSess
     const beforeSnapshot = session.crmSnapshot;
     setBefore(beforeSnapshot);
     try {
-      const data = await postWriteback({ sessionId: session.sessionId, actor, expectedSessionVersion: session.version, expectedOpportunityVersion: oppVersion(session.crmSnapshot), idempotencyKey: idempotencyKey.current });
+      const data = await postWriteback({ sessionId: session.sessionId, actor, expectedSessionVersion: session.version, expectedOpportunityVersion: oppVersion(session.crmSnapshot), idempotencyKey });
       const resultRows: Row[] = data.results.map((result) => ({ recommendationId: result.recommendationId, field: field(session.recommendations.find((rec) => rec.id === result.recommendationId)!), status: result.attempt.status, retryCount: result.retryCount, errorCode: result.errorCode, errorMessage: result.errorMessage, approvalRequirement: result.attempt.approvalRequirement, crmChanged: result.crmChanged }));
       const skipped = session.recommendations.filter((rec) => !isApproved(rec)).map((rec) => ({ recommendationId: rec.id, field: field(rec), status: "skipped", retryCount: 0, approvalRequirement: rec.riskLevel === "high" ? "manager_approval" : "standard_approval", crmChanged: false }));
       setRows([...resultRows, ...skipped]);
