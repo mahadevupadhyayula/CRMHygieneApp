@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { recommendationCardSchema } from "../agents/recommendation/schemas";
+import { approvalRecommendationSchema } from "../agents/approval/schemas";
 import { approvalAuditEventSchema } from "../agents/approval/schemas";
 import { extractionOpportunitySchema, extractionSourceItemSchema } from "../agents/extraction/schemas";
 import { simulatedCrmSnapshotSchema, writebackAttemptSchema } from "../agents/writeback/schemas";
@@ -37,7 +37,7 @@ export const demoSessionSchema = z.object({
   scenarioId: demoScenarioIdSchema,
   transcript: z.string(),
   workflowResult: z.unknown().optional(),
-  recommendations: z.array(recommendationCardSchema),
+  recommendations: z.array(approvalRecommendationSchema),
   crmSnapshot: simulatedCrmSnapshotSchema,
   writebackSnapshot: simulatedCrmSnapshotSchema,
   auditEvents: z.array(approvalAuditEventSchema),

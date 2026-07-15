@@ -1,7 +1,7 @@
 import type { z } from "zod";
 
 import type { RecommendationCard } from "../agents/recommendation";
-import type { ApprovalAuditEvent } from "../agents/approval";
+import type { ApprovalAuditEvent, ApprovalRecommendation } from "../agents/approval";
 import type { ExtractionOpportunity, ExtractionSourceItem } from "../agents/extraction";
 import type { SimulatedCrmSnapshot, WritebackAttempt } from "../agents/writeback";
 import type { HygieneWorkflowResult, HygieneWorkflowFinalStatus } from "../workflows";
@@ -26,11 +26,11 @@ export type SessionStoreError = z.infer<typeof sessionStoreErrorSchema>;
 export type DemoSessionUpdate = Partial<{
   transcript: string;
   workflowResult: HygieneWorkflowResult;
-  recommendations: RecommendationCard[];
+  recommendations: ApprovalRecommendation[];
   crmSnapshot: SimulatedCrmSnapshot;
   writebackSnapshot: SimulatedCrmSnapshot;
   auditEvents: ApprovalAuditEvent[];
   writebackAttempts: WritebackAttempt[];
 }>;
 
-export type { ExtractionOpportunity, ExtractionSourceItem, SimulatedCrmSnapshot, RecommendationCard };
+export type { ExtractionOpportunity, ExtractionSourceItem, SimulatedCrmSnapshot, RecommendationCard, ApprovalRecommendation };
