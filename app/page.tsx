@@ -7,12 +7,12 @@ export default function Home() {
   return (
     <main className="home-shell">
       <section aria-labelledby="product-name" className="hero-card">
-        <p className="eyebrow">Stage 12 core UI</p>
+        <p className="eyebrow">Evidence-backed CRM hygiene</p>
         <h1 id="product-name">CRM Hygiene Agent</h1>
         <p className="principle">{productPrinciple}</p>
         <div className="hero-actions">
-          <Link className="button-link" href="/dashboard">Open dashboard</Link>
-          <Link className="button-link secondary" href="/approvals">Review approvals</Link>
+          <Link className="button-link" href="/demo">Open live demo</Link>
+          <Link className="button-link secondary" href="/dashboard">Open deal dashboard</Link>
         </div>
       </section>
     </main>

@@ -12,9 +12,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <Link className="brand" href="/">CRM Hygiene</Link>
         <nav>
           <Link href="/">Home</Link>
-          <Link href="/dashboard">Dashboard</Link>
+          <Link href="/demo">Live Demo</Link>
+          <Link href="/dashboard">Deal Dashboard</Link>
           <Link href="/approvals">Approval Inbox</Link>
           <Link href="/audit">Audit Log</Link>
+          <Link href="/evaluations">Evaluations</Link>
           <Link href="/settings">Settings</Link>
         </nav>
       </aside>
@@ -238,7 +240,7 @@ export function AuditList({ entries }: { entries: AuditEntry[] }) {
 export function SettingsView() {
   return (
     <AppShell>
-      <PageHeader eyebrow="Workspace" title="Settings" description="Configure safe defaults for approval policy and simulated writeback. Live CRM integration is intentionally disabled for this stage." />
+      <PageHeader eyebrow="Workspace" title="Settings" description="Configure safe defaults for approval policy and simulated writeback. Live CRM integration remains disabled unless explicitly connected by an administrator." />
       <div className="settings-grid">
         <Section title="Approval policy"><KeyValueGrid values={{ "High-risk approvals": "Manager required", "AEs may approve": "NextStep and dated follow-ups", "Evidence required": "Yes", "Stale recommendations": "Blocked" }} /></Section>
         <Section title="Data sources"><KeyValueGrid values={{ CRM: "Sample snapshot", Email: "Mock evidence", Calls: "Mock transcripts", "Live CRM writeback": "Disabled" }} /></Section>
