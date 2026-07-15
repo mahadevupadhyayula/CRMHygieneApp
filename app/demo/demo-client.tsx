@@ -1,9 +1,12 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import type { ApprovalRecommendation } from "../../lib/agents/approval";
+import { RecommendationCard } from "./components/recommendation-card";
+import type { RecommendationActionPayload } from "./components/recommendation-actions";
 
 type Scenario = { scenarioId: string; name: string; description: string; disclaimerText: string; defaultEditableTranscript: string };
-type DemoSession = { sessionId: string; scenarioId: string; transcript: string; crmSnapshot: { opportunities: Record<string, { fields: Record<string, { value: unknown; label?: string }> }> }; version: number };
+type DemoSession = { sessionId: string; scenarioId: string; transcript: string; recommendations: ApprovalRecommendation[]; crmSnapshot: { opportunities: Record<string, { fields: Record<string, { value: unknown; label?: string }> }> }; version: number };
 type WorkflowResult = {
   workflowRunId: string;
   extractedFacts: Array<{ factType: string; rawValue: string; normalizedValue: string; evidenceText: string; confidence: number; confidenceBand: string; sourceId: string }>;
@@ -73,23 +76,37 @@ export function DemoClient({ scenarios }: { scenarios: Scenario[] }) {
   const fields = Object.values(session?.crmSnapshot.opportunities ?? {})[0]?.fields ?? {};
 
   return <div className="demo-grid">
-    <section className="panel demo-disclaimer" data-testid="demo-disclaimer"><h2>Demo environment disclaimer</h2><p>{scenario.disclaimerText}</p><p><strong>Extraction is deterministic.</strong> CRM writeback is simulated; this Phase 4 page does not provide approval or writeback actions.</p></section>
+    <section className="panel demo-disclaimer" data-testid="demo-disclaimer"><h2>Demo environment disclaimer</h2><p>{scenario.disclaimerText}</p><p><strong>Extraction is deterministic.</strong> CRM writeback is simulated; approval actions call the backend approval engine; writeback UI is not included in Phase 5.</p></section>
     <section className="panel" data-testid="scenario-panel"><h2>Scenario selector</h2><select data-testid="scenario-selector" value={scenarioId} onChange={(event) => { const next = event.target.value; setScenarioId(next); void createSession(next); }}>{scenarios.map((item) => <option key={item.scenarioId} value={item.scenarioId}>{item.name}</option>)}</select><p>{scenario.description}</p><button data-testid="reset-scenario" onClick={resetScenario} disabled={loading}>Reset Scenario</button></section>
     <section className="panel wide"><h2>Editable source transcript</h2><textarea data-testid="transcript-input" value={transcript} onChange={(event) => setTranscript(event.target.value)} rows={8} /></section>
     <section className="panel"><h2>Current CRM snapshot</h2><dl className="key-grid" data-testid="crm-snapshot">{Object.entries(fields).map(([field, info]) => <div key={field}><dt>{info.label ?? field}</dt><dd>{valueText(info.value)}</dd></div>)}</dl></section>
     <section className="panel"><h2>Run analysis</h2><button data-testid="run-analysis" onClick={runAnalysis} disabled={loading || !session}>{loading ? "Analyzing…" : "Run Hygiene Analysis"}</button>{loading ? <p data-testid="loading-state">Loading backend analysis…</p> : null}{error ? <div className="error-box" data-testid="error-state"><strong>{error.code ?? "ERROR"}</strong><p>{error.message}</p>{error.recoverable ? <button onClick={() => createSession(scenarioId)}>Recreate session</button> : null}</div> : null}</section>
-    {workflowResult ? <Results result={workflowResult} /> : <section className="panel wide" data-testid="empty-results"><h2>Analysis results</h2><p className="inline-empty">Run backend hygiene analysis to populate extracted facts, evidence, comparisons, score, recommendations, final status, and telemetry.</p></section>}
+    {workflowResult ? <Results result={workflowResult} session={session} onSessionUpdate={(nextSession) => setSession(nextSession)} /> : <section className="panel wide" data-testid="empty-results"><h2>Analysis results</h2><p className="inline-empty">Run backend hygiene analysis to populate extracted facts, evidence, comparisons, score, recommendations, final status, and telemetry.</p></section>}
   </div>;
 }
 
-function Results({ result }: { result: WorkflowResult }) {
+function Results({ result, session, onSessionUpdate }: { result: WorkflowResult; session?: DemoSession; onSessionUpdate: (session: DemoSession) => void }) {
+  const [actionError, setActionError] = useState<string>();
+  async function actOnRecommendation(id: string, payload: RecommendationActionPayload) {
+    if (!session) return;
+    setActionError(undefined);
+    try {
+      const data = await postJson(`/api/demo/recommendations/${id}`, { sessionId: session.sessionId, actor: { id: "mgr-1", name: "Morgan Manager", role: "manager" }, ...payload });
+      if (data.session) onSessionUpdate(data.session);
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      const message = code === "VERSION_CONFLICT" ? `${(error as Error).message} Refresh or re-run analysis before trying again.` : (error as Error).message;
+      setActionError(message);
+      throw new Error(message);
+    }
+  }
   return <>
     <section className="panel" data-testid="extracted-facts"><h2>Extracted facts</h2>{result.extractedFacts.map((fact, index) => <article className="mini-card" key={`${fact.factType}-${index}`}><h3>{fact.factType}</h3><p>{fact.normalizedValue}</p><span>{fact.confidenceBand} confidence ({pct(fact.confidence)})</span></article>)}</section>
     <section className="panel" data-testid="validation-statuses"><h2>Confidence and validation status</h2>{result.validationResults.map((item) => <article className="mini-card" key={item.factId}><strong>{item.status}</strong><p>Confidence {pct(item.confidence)} · evidence {item.evidenceStatus} · action risk {item.actionRisk}</p><p>{item.reasons.join("; ")}</p></article>)}</section>
     <section className="panel" data-testid="evidence-excerpts"><h2>Evidence excerpts</h2>{result.extractedFacts.map((fact, index) => <blockquote className="mini-card" key={`${fact.sourceId}-${index}`}>{fact.evidenceText}</blockquote>)}</section>
     <section className="panel" data-testid="crm-comparisons"><h2>CRM comparisons</h2>{result.fieldComparisons.length ? result.fieldComparisons.map((item) => <article className="mini-card" key={`${item.crmField}-${item.extractedValue}`}><h3>{item.crmField}</h3><p>CRM: {valueText(item.currentValue)}</p><p>Extracted: {item.extractedValue}</p><p>{item.issueType} · {item.severity} · {item.recommendationEligible ? "eligible" : "not eligible"}</p></article>) : <p className="inline-empty">No CRM differences detected.</p>}</section>
     <section className="panel" data-testid="hygiene-score"><h2>Hygiene score</h2>{result.hygieneScore ? <><p className="score-hero"><span className="badge">{result.hygieneScore.score} · {result.hygieneScore.riskLevel}</span></p><p>{result.hygieneScore.explanation}</p></> : <p>No score available.</p>}</section>
-    <section className="panel" data-testid="recommendations"><h2>Recommendations</h2>{result.recommendations.length ? result.recommendations.map((item) => <article className="mini-card" key={item.id}><h3>{item.proposedAction}</h3><p>{item.reason}</p><p>{item.crmField ?? "No field"}: {valueText(item.currentCrmValue)} → {valueText(item.suggestedValue)}</p><span>{item.status} · {item.riskLevel} · {pct(item.confidence)}</span></article>) : <p className="inline-empty">No recommendations.</p>}</section>
+    <section className="panel" data-testid="recommendations"><h2>Recommendations</h2>{actionError ? <p role="alert" data-testid="recommendation-error">{actionError}</p> : null}{session?.recommendations.length ? session.recommendations.map((item) => <RecommendationCard key={item.id} recommendation={item} onAction={actOnRecommendation} />) : result.recommendations.length ? result.recommendations.map((item) => <article className="mini-card" key={item.id}><h3>{item.proposedAction}</h3><p>{item.reason}</p><p>{item.crmField ?? "No field"}: {valueText(item.currentCrmValue)} → {valueText(item.suggestedValue)}</p><span>{item.status} · {item.riskLevel} · {pct(item.confidence)}</span></article>) : <p className="inline-empty">No recommendations.</p>}</section>
     <section className="panel wide" data-testid="final-status"><h2>Final workflow status</h2><p><strong>{result.finalStatus}</strong></p>{result.telemetry ? <p data-testid="telemetry-summary">Telemetry: {result.telemetry.factCount} facts, {result.telemetry.comparisonCount} comparisons, {result.telemetry.recommendationCount} recommendations, {result.telemetry.durationMs}ms, {result.telemetry.retryCount} retries.</p> : null}</section>
   </>;
 }
